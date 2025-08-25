@@ -15,6 +15,7 @@ const (
 
 type BufferPool struct {
 	// TODO: some code goes here
+
 }
 
 // Create a new BufferPool with the specified number of pages
@@ -63,5 +64,10 @@ func (bp *BufferPool) BeginTransaction(tid TransactionID) error {
 // of pages in the BufferPool in a map keyed by the [DBFile.pageKey].
 func (bp *BufferPool) GetPage(file DBFile, pageNo int, tid TransactionID, perm RWPerm) (*Page, error) {
 	// TODO: some code goes here
-	return nil, nil
+	pageKey := file.pageKey(pageNo)
+	if p
+	if err != nil {
+		return nil, err
+	}
+	return page, nil
 }

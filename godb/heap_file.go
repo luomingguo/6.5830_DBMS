@@ -30,6 +30,7 @@ type HeapFile struct {
 // May return an error if the file cannot be opened or created.
 func NewHeapFile(fromFile string, td *TupleDesc, bp *BufferPool) (*HeapFile, error) {
 	// TODO: some code goes here
+	
 	return &HeapFile{}, nil //replace me
 }
 
