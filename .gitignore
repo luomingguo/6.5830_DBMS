@@ -22,3 +22,8 @@ go.work
 
 # sqlite data
 lab0/mbta.sqlite
+*go.sum
+*/main
+.pytest_cache
+.vscode
+.DS_STore
