@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"log"
+	rdb "main/ridership_db"
+
 	"encoding/base64"
 	"html/template"
-	rdb "main/ridership_db"
 	"main/utils"
 	"net/http"
 	"os"
@@ -17,39 +19,39 @@ func HomeHandler(w http.ResponseWriter, r *http.Request) {
 	if selectedChart == "" {
 		selectedChart = "red"
 	}
-	var err error
+
 	// instantiate ridershipDB
 	// var db rdb.RidershipDB = &rdb.SqliteRidershipDB{} // Sqlite implementation
 	var db rdb.RidershipDB = &rdb.CsvRidershipDB{} // CSV implementation
 
 	// TODO: some code goes here
-	_, currentFilePath, _, _ := runtime.Caller(0)
-	currentDir := filepath.Dir(currentFilePath)
-	// mbtaPath := filepath.Join(currentDir, "../mbta.sqlite") // Sqlite implementation
-	mbtaPath := filepath.Join(currentDir, "../mbta.csv") // CSV implementation
-
 	// Get the chart data from RidershipDB
-	err = db.Open(mbtaPath)
+	wd, _ := os.Getwd()
+	// mbtaPath := filepath.Join(wd, "../mbta.sqlite") // Sqlite implementation
+	mbtaPath := filepath.Join(wd, "../mbta.csv") // CSV implementation
+	err := db.Open(mbtaPath)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Fatalf("open failed: %v", err)
+		w.WriteHeader(500)
 		return
 	}
-	defer db.Close()
-	rs, err := db.GetRidership(selectedChart)
+	values, err := db.GetRidership(selectedChart)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		log.Fatalf("GetRidership failed: %v", err)
+		w.WriteHeader(500)
 	}
 	// TODO: some code goes here
 	// Plot the bar chart using utils.GenerateBarChart. The function will return the bar chart
 	// as PNG byte slice. Convert the bytes to a base64 string, which is used to embed images in HTML.
-	bc, err := utils.GenerateBarChart(rs)
+	imgBytes, err := utils.GenerateBarChart(values)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Fatalf("GenerateBarChart failed: %v", err)
+		w.WriteHeader(500)
 		return
 	}
-	imgStr := base64.StdEncoding.EncodeToString(bc)
+	imgStr := base64.RawStdEncoding.EncodeToString(imgBytes)
 	// Get path to the HTML template for our web app
+	_, currentFilePath, _, _ := runtime.Caller(0)
 	templateFile := filepath.Join(filepath.Dir(currentFilePath), "template.html")
 
 	// Read and parse the HTML so we can use it as our web app template
@@ -77,9 +79,5 @@ func HomeHandler(w http.ResponseWriter, r *http.Request) {
 	// TODO: some code goes here
 	// Use tmpl.Execute to generate the final HTML output and send it as a response
 	// to the client's request.
-	err = tmpl.Execute(w, data)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	tmpl.Execute(w, data)
 }

@@ -3,7 +3,6 @@ package ridershipDB
 import (
 	"encoding/csv"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 )
@@ -38,39 +37,27 @@ func (c *CsvRidershipDB) Open(filePath string) error {
 
 // TODO: some code goes here
 // Implement the remaining RidershipDB methods
+func (s *CsvRidershipDB) GetRidership(lineId string) ([]int64, error) {
 
-func (c *CsvRidershipDB) GetRidership(lineId string) ([]int64, error) {
-	rc := make([]int64, 9)
-
-	// Skip the header row
-	_, err := c.csvReader.Read()
+	records, err := s.csvReader.ReadAll()
 	if err != nil {
 		return nil, err
 	}
-	for {
-		data, err := c.csvReader.Read()
-		if err != nil {
-			if err == io.EOF {
-				return rc, nil
-			}
-			return nil, err
-		}
-		if len(data) != 5 {
-			continue
-		}
-		if data[0] == lineId {
-			one := data[len(data)-1]
-			covOne, err := strconv.ParseInt(one, 10, 64)
+	ret := make([]int64, len(s.idIdxMap))
+	var timeStamp string
+	for _, record := range records {
+		if record[0] == lineId {
+			val, err := strconv.Atoi(record[4])
 			if err != nil {
 				return nil, err
 			}
-			rc[c.idIdxMap[data[2]]] += covOne
+			timeStamp = record[2]
+			ret[s.idIdxMap[timeStamp]] += int64(val)
 		}
 	}
-	return rc, nil
-
+	return ret, nil
 }
 
-func (c *CsvRidershipDB) Close() error {
-	return c.csvFile.Close()
+func (s *CsvRidershipDB) Close() error {
+	return s.csvFile.Close()
 }
