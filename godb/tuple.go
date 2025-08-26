@@ -5,12 +5,9 @@ package godb
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
+	"strconv"
 	"strings"
-
-	"github.com/mitchellh/hashstructure/v2"
-	//"github.com/mitchellh/hashstructure/v2"
 )
 
 // DBType is the type of a tuple field, in GoDB, e.g., IntType or StringType
@@ -22,7 +19,15 @@ const (
 	UnknownType DBType = iota //used internally, during parsing, because sometimes the type is unknown
 )
 
-var typeNames map[DBType]string = map[DBType]string{IntType: "int", StringType: "string"}
+func (t DBType) String() string {
+	switch t {
+	case IntType:
+		return "int"
+	case StringType:
+		return "string"
+	}
+	return "unknown"
+}
 
 // FieldType is the type of a field in a tuple, e.g., its name, table, and [godb.DBType].
 // TableQualifier may or may not be an emtpy string, depending on whether the table
@@ -43,19 +48,8 @@ type TupleDesc struct {
 // are the same length
 func (d1 *TupleDesc) equals(d2 *TupleDesc) bool {
 	// TODO: some code goes here
-	if len(d1.Fields) != len(d2.Fields) {
-		return false
-	}
-	for idx, _ := range d1.Fields {
-		field1 := d1.Fields[idx]
-		field2 := d2.Fields[idx]
-		if field1.Fname != field2.Fname ||
-			field1.TableQualifier != field2.TableQualifier ||
-			field1.Ftype != field2.Ftype {
-			return false
-		}
-	}
 	return true
+
 }
 
 // Given a FieldType f and a TupleDesc desc, find the best
@@ -89,15 +83,7 @@ func findFieldInTd(field FieldType, desc *TupleDesc) (int, error) {
 // Look at the built-in function "copy".
 func (td *TupleDesc) copy() *TupleDesc {
 	// TODO: some code goes here
-	copyFields := make([]FieldType, len(td.Fields))
-	for idx, item := range td.Fields {
-		copyFields[idx] = FieldType{
-			Fname:          item.Fname,
-			Ftype:          item.Ftype,
-			TableQualifier: item.TableQualifier,
-		}
-	}
-	return &TupleDesc{Fields: copyFields}
+	return &TupleDesc{} //replace me
 }
 
 // Assign the TableQualifier of every field in the TupleDesc to be the
@@ -117,19 +103,14 @@ func (td *TupleDesc) setTableAlias(alias string) {
 // appended onto the fields of desc.
 func (desc *TupleDesc) merge(desc2 *TupleDesc) *TupleDesc {
 	// TODO: some code goes here
-	newFields := make([]FieldType, len(desc.Fields)+len(desc2.Fields))
-	copy(newFields, desc.Fields)
-	copy(newFields[len(desc.Fields):], desc2.Fields)
-	return &TupleDesc{Fields: newFields}
+	return &TupleDesc{} //replace me
 }
 
 // ================== Tuple Methods ======================
 
-// Interface used for tuple field values
-// Since it implements no methods, any object can be used
-// but having an interface for this improves code readability
-// where tuple values are used
+// Interface for tuple field values
 type DBValue interface {
+	EvalPred(v DBValue, op BoolOp) bool
 }
 
 // Integer field value
@@ -169,30 +150,7 @@ type recordID interface {
 // tuple.
 func (t *Tuple) writeTo(b *bytes.Buffer) error {
 	// TODO: some code goes here
-	for i, field := range t.Desc.Fields {
-		switch field.Ftype {
-		case IntType:
-			if err := binary.Write(b, binary.LittleEndian, t.Fields[i]); err != nil {
-				return fmt.Errorf("failed to write IntFiled: %w", err)
-			}
-		case StringType:
-			strField, ok := t.Fields[i].(StringField)
-			if !ok {
-				return fmt.Errorf("field is not of type StringField")
-			}
-
-			// Create a buffer with fixed size
-			var strBytes [StringLength]byte
-			copy(strBytes[:], strField.Value)
-
-			if _, err := b.Write(strBytes[:]); err != nil {
-				return fmt.Errorf("failed to write StringField: %w", err)
-			}
-		default:
-			return fmt.Errorf("unsupported field type")
-		}
-	}
-	return nil
+	return fmt.Errorf("writeTo not implemented") //replace me
 }
 
 // Read the contents of a tuple with the specified [TupleDesc] from the
@@ -210,29 +168,7 @@ func (t *Tuple) writeTo(b *bytes.Buffer) error {
 // tuple.
 func readTupleFrom(b *bytes.Buffer, desc *TupleDesc) (*Tuple, error) {
 	// TODO: some code goes here
-	tuple := &Tuple{
-		Desc:   *desc,
-		Fields: make([]DBValue, len(desc.Fields)),
-	}
-	for i, field := range desc.Fields {
-		switch field.Ftype {
-		case IntType:
-			var intValue int64
-			if err := binary.Read(b, binary.LittleEndian, &intValue); err != nil {
-				return nil, fmt.Errorf("failed to read IntField: %w", err)
-			}
-			tuple.Fields[i] = IntField{Value: intValue}
-		case StringType:
-			strBytes := make([]byte, StringLength)
-			if _, err := b.Read(strBytes); err != nil {
-				return nil, fmt.Errorf("failed to read StringField: %w", err)
-			}
-			// 去除字符串末尾的填充 0 字节
-			strValue := string(bytes.TrimRight(strBytes, "\x00"))
-			tuple.Fields[i] = StringField{Value: strValue}
-		}
-	}
-	return tuple, nil
+	return nil, fmt.Errorf("readTupleFrom not implemented") //replace me
 }
 
 // Compare two tuples for equality.  Equality means that the TupleDescs are equal
@@ -240,30 +176,16 @@ func readTupleFrom(b *bytes.Buffer, desc *TupleDesc) (*Tuple, error) {
 // the [TupleDesc.equals] method, but fields can be compared directly with equality
 // operators.
 func (t1 *Tuple) equals(t2 *Tuple) bool {
-	if len(t1.Fields) != len(t2.Fields) {
-		return false
-	}
-	if !t1.Desc.equals(&t2.Desc) {
-		return false
-	}
-
-	for i, field := range t1.Fields {
-		if field != t2.Fields[i] {
-			return false
-		}
-	}
+	// TODO: some code goes here
 	return true
 }
 
-// Merge two tuples together, producing a new tuple with the fields of t2 appended to t1.
+// Merge two tuples together, producing a new tuple with the fields of t2
+// appended to t1. The new tuple should have a correct TupleDesc that is created
+// by merging the descriptions of the two input tuples.
 func joinTuples(t1 *Tuple, t2 *Tuple) *Tuple {
 	// TODO: some code goes here
-	joinedDesc := t1.Desc.merge(&t2.Desc)
-	joinedFields := append(t1.Fields, t2.Fields...)
-	return &Tuple{
-		Desc:   *joinedDesc,
-		Fields: joinedFields,
-	}
+	return &Tuple{}
 }
 
 type orderByState int
@@ -285,52 +207,12 @@ const (
 //
 // Calling the [Expr.EvalExpr] method on a tuple will return the value of the
 // expression on the supplied tuple.
+//
+// Note that EvalExpr uses the [Tuple.project] method, so you will need
+// to implement projection before testing compareField.
 func (t *Tuple) compareField(t2 *Tuple, field Expr) (orderByState, error) {
 	// TODO: some code goes here
-	value1, err := field.EvalExpr(t)
-	if err != nil {
-		return OrderedEqual, fmt.Errorf("failed to evaluate expression on the first tuple: %w", err)
-	}
-	value2, err := field.EvalExpr(t2)
-	if err != nil {
-		return OrderedEqual, fmt.Errorf("failed to evaluate expression on the second tuple: %w", err)
-	}
-	field_type := field.GetExprType()
-	switch field_type.Ftype {
-	case IntType:
-		v1, ok := value1.(IntField)
-		if !ok {
-			return OrderedEqual, fmt.Errorf("type mismatch: expected IntField, got %T", value1)
-		}
-		v2, ok := value2.(IntField)
-		if !ok {
-			return OrderedEqual, fmt.Errorf("type mismatch: expected IntField, got %T", value2)
-		}
-		if v1.Value < v2.Value {
-			return OrderedLessThan, nil
-		} else if v1.Value > v2.Value {
-			return OrderedGreaterThan, nil
-		}
-		return OrderedEqual, nil
-
-	case StringType:
-		v1, ok := value1.(StringField)
-		if !ok {
-			return OrderedEqual, fmt.Errorf("type mismatch: expected StringField, got %T", value1)
-		}
-		v2, ok := value2.(StringField)
-		if !ok {
-			return OrderedEqual, fmt.Errorf("type mismatch: expected StringField, got %T", value2)
-		}
-		if v1.Value < v2.Value {
-			return OrderedLessThan, nil
-		} else if v1.Value > v2.Value {
-			return OrderedGreaterThan, nil
-		}
-		return OrderedEqual, nil
-	default:
-		return OrderedEqual, fmt.Errorf("unsupported DBValue type: %T", value1)
-	}
+	return OrderedEqual, fmt.Errorf("compareField not implemented") // replace me
 }
 
 // Project out the supplied fields from the tuple. Should return a new Tuple
@@ -341,53 +223,14 @@ func (t *Tuple) compareField(t2 *Tuple, field Expr) (orderByState, error) {
 // entry t2.name in t, but only if there is not an entry t1.name in t)
 func (t *Tuple) project(fields []FieldType) (*Tuple, error) {
 	// TODO: some code goes here
-	fieldIndexMap := make(map[string]int)
-	for i, field := range t.Desc.Fields {
-		fieldIndexMap[field.Fname] = i
-	}
-
-	// 添加能匹配TableQualifier元组且被投影的属性值，并跟踪这类元组
-	newDesc := &TupleDesc{}
-	fieldMap := make(map[int]struct{})
-	for _, field := range fields {
-		if idx, found := fieldIndexMap[field.Fname]; found {
-			// Prefer fields with matching TableQualifier
-			if t.Desc.Fields[idx].TableQualifier == field.TableQualifier {
-				newDesc.Fields = append(newDesc.Fields, t.Desc.Fields[idx])
-				fieldMap[idx] = struct{}{}
-			}
-		}
-	}
-	// 添加不能匹配TableQualifier，但也被投影的属性值
-	for _, field := range fields {
-		if _, found := fieldMap[fieldIndexMap[field.Fname]]; !found {
-			if idx, exists := fieldIndexMap[field.Fname]; exists {
-				newDesc.Fields = append(newDesc.Fields, t.Desc.Fields[idx])
-			}
-		}
-	}
-
-	// Create a new Tuple with the selected fields
-	newFields := make([]DBValue, len(newDesc.Fields))
-	for i, field := range newDesc.Fields {
-		idx := fieldIndexMap[field.Fname]
-		newFields[i] = t.Fields[idx]
-	}
-
-	return &Tuple{
-		Desc:   *newDesc,
-		Fields: newFields,
-		Rid:    t.Rid,
-	}, nil
+	return nil, fmt.Errorf("project not implemented") //replace me
 }
 
 // Compute a key for the tuple to be used in a map structure
 func (t *Tuple) tupleKey() any {
-
-	//todo efficiency here is poor - hashstructure is probably slow
-	hash, _ := hashstructure.Hash(t, hashstructure.FormatV2, nil)
-
-	return hash
+	var buf bytes.Buffer
+	t.writeTo(&buf)
+	return buf.String()
 }
 
 var winWidth int = 120
@@ -438,7 +281,7 @@ func (t *Tuple) PrettyPrintString(aligned bool) string {
 		str := ""
 		switch f := f.(type) {
 		case IntField:
-			str = fmt.Sprintf("%d", f.Value)
+			str = strconv.FormatInt(f.Value, 10)
 		case StringField:
 			str = f.Value
 		}
@@ -453,5 +296,4 @@ func (t *Tuple) PrettyPrintString(aligned bool) string {
 		}
 	}
 	return outstr
-
 }

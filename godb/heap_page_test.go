@@ -5,22 +5,38 @@ import (
 	"unsafe"
 )
 
-func TestInsertHeapPage(t *testing.T) {
-	td, t1, t2, hf, _, _ := makeTestVars()
-	pg := newHeapPage(&td, 0, hf)
+func TestHeapPageInsert(t *testing.T) {
+	td, t1, t2, hf, _, _ := makeTestVars(t)
+	pg, err := newHeapPage(&td, 0, hf)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 	var expectedSlots = (PageSize - 8) / (StringLength + int(unsafe.Sizeof(int64(0))))
 	if pg.getNumSlots() != expectedSlots {
 		t.Fatalf("Incorrect number of slots, expected %d, got %d", expectedSlots, pg.getNumSlots())
 	}
 
-	pg.insertTuple(&t1)
-	pg.insertTuple(&t2)
+	_, err = pg.insertTuple(&t1)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	_, err = pg.insertTuple(&t2)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 
 	iter := pg.tupleIter()
+	if iter == nil {
+		t.Fatalf("Iterator was nil")
+	}
+
 	cnt := 0
 	for {
-
-		tup, _ := iter()
+		tup, err := iter()
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
 		if tup == nil {
 			break
 		}
@@ -32,9 +48,12 @@ func TestInsertHeapPage(t *testing.T) {
 	}
 }
 
-func TestDeleteHeapPage(t *testing.T) {
-	td, t1, t2, hf, _, _ := makeTestVars()
-	pg := newHeapPage(&td, 0, hf)
+func TestHeapPageDelete(t *testing.T) {
+	td, t1, t2, hf, _, _ := makeTestVars(t)
+	pg, err := newHeapPage(&td, 0, hf)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 
 	pg.insertTuple(&t1)
 	slotNo, _ := pg.insertTuple(&t2)
@@ -61,8 +80,11 @@ func TestDeleteHeapPage(t *testing.T) {
 
 // Unit test for insertTuple
 func TestHeapPageInsertTuple(t *testing.T) {
-	td, t1, _, hf, _, _ := makeTestVars()
-	page := newHeapPage(&td, 0, hf)
+	td, t1, _, hf, _, _ := makeTestVars(t)
+	page, err := newHeapPage(&td, 0, hf)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 	free := page.getNumSlots()
 
 	for i := 0; i < free; i++ {
@@ -98,7 +120,7 @@ func TestHeapPageInsertTuple(t *testing.T) {
 		}
 	}
 
-	_, err := page.insertTuple(&t1)
+	_, err = page.insertTuple(&t1)
 
 	if err == nil {
 		t.Errorf("Expected error due to full page")
@@ -107,8 +129,11 @@ func TestHeapPageInsertTuple(t *testing.T) {
 
 // Unit test for deleteTuple
 func TestHeapPageDeleteTuple(t *testing.T) {
-	td, _, _, hf, _, _ := makeTestVars()
-	page := newHeapPage(&td, 0, hf)
+	td, _, _, hf, _, _ := makeTestVars(t)
+	page, err := newHeapPage(&td, 0, hf)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 	free := page.getNumSlots()
 
 	list := make([]recordID, free)
@@ -140,7 +165,7 @@ func TestHeapPageDeleteTuple(t *testing.T) {
 		}
 	}
 
-	err := page.deleteTuple(list[0])
+	err = page.deleteTuple(list[0])
 	if err == nil {
 		t.Errorf("page should be empty; expected error")
 	}
@@ -148,18 +173,21 @@ func TestHeapPageDeleteTuple(t *testing.T) {
 
 // Unit test for isDirty, setDirty
 func TestHeapPageDirty(t *testing.T) {
-	td, _, _, hf, _, _ := makeTestVars()
-	page := newHeapPage(&td, 0, hf)
+	td, _, _, hf, _, _ := makeTestVars(t)
+	page, err := newHeapPage(&td, 0, hf)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 
-	page.setDirty(true)
+	page.setDirty(0, true)
 	if !page.isDirty() {
 		t.Errorf("page should be dirty")
 	}
-	page.setDirty(true)
+	page.setDirty(0, true)
 	if !page.isDirty() {
 		t.Errorf("page should be dirty")
 	}
-	page.setDirty(false)
+	page.setDirty(-1, false)
 	if page.isDirty() {
 		t.Errorf("page should be not dirty")
 	}
@@ -167,9 +195,11 @@ func TestHeapPageDirty(t *testing.T) {
 
 // Unit test for toBuffer and initFromBuffer
 func TestHeapPageSerialization(t *testing.T) {
-
-	td, _, _, hf, _, _ := makeTestVars()
-	page := newHeapPage(&td, 0, hf)
+	td, _, _, hf, _, _ := makeTestVars(t)
+	page, err := newHeapPage(&td, 0, hf)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 	free := page.getNumSlots()
 
 	for i := 0; i < free-1; i++ {
@@ -184,8 +214,11 @@ func TestHeapPageSerialization(t *testing.T) {
 	}
 
 	buf, _ := page.toBuffer()
-	page2 := newHeapPage(&td, 0, hf)
-	err := page2.initFromBuffer(buf)
+	page2, err := newHeapPage(&td, 0, hf)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	err = page2.initFromBuffer(buf)
 	if err != nil {
 		t.Fatalf("Error loading heap page from buffer.")
 	}
@@ -216,5 +249,31 @@ func TestHeapPageSerialization(t *testing.T) {
 		if findEqCount(tup, page.tupleIter()) != findEqCount(tup, page2.tupleIter()) {
 			t.Errorf("Serialization / deserialization doesn't result in identical heap page.")
 		}
+	}
+}
+
+func TestHeapPageBufferLen(t *testing.T) {
+	td, _, _, hf, _, _ := makeTestVars(t)
+	page, err := newHeapPage(&td, 0, hf)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	free := page.getNumSlots()
+
+	for i := 0; i < free-1; i++ {
+		var addition = Tuple{
+			Desc: td,
+			Fields: []DBValue{
+				StringField{"sam"},
+				IntField{int64(i)},
+			},
+		}
+		page.insertTuple(&addition)
+	}
+
+	buf, _ := page.toBuffer()
+
+	if buf.Len() != PageSize {
+		t.Fatalf("HeapPage.toBuffer returns buffer of unexpected size;  NOTE:  This error may be OK, but many implementations that don't write full pages break.")
 	}
 }

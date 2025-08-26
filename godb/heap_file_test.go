@@ -8,152 +8,171 @@ import (
 const TestingFile string = "test.dat"
 const TestingFile2 string = "test2.dat"
 
-func makeTestVars() (TupleDesc, Tuple, Tuple, *HeapFile, *BufferPool, TransactionID) {
-	var td = TupleDesc{Fields: []FieldType{
-		{Fname: "name", Ftype: StringType},
-		{Fname: "age", Ftype: IntType},
-	}}
-
-	var t1 = Tuple{
-		Desc: td,
-		Fields: []DBValue{
-			StringField{"sam"},
-			IntField{25},
-		}}
-
-	var t2 = Tuple{
-		Desc: td,
-		Fields: []DBValue{
-			StringField{"george jones"},
-			IntField{999},
-		}}
-
-	bp := NewBufferPool(3)
+func makeTestFile(t *testing.T, bufferPoolSize int) (*BufferPool, *HeapFile) {
 	os.Remove(TestingFile)
-	hf, err := NewHeapFile(TestingFile, &td, bp)
+
+	bp, c, err := MakeTestDatabase(bufferPoolSize, "catalog.txt")
 	if err != nil {
-		print("ERROR MAKING TEST VARS, BLARGH")
-		panic(err)
+		t.Fatalf(err.Error())
 	}
 
-	tid := NewTID()
-	bp.BeginTransaction(tid)
-
-	return td, t1, t2, hf, bp, tid
-
+	td, _, _ := makeTupleTestVars()
+	tbl, err := c.addTable("test", td)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	return bp, tbl.(*HeapFile)
 }
 
-func TestCreateAndInsertHeapFile(t *testing.T) {
-	_, t1, t2, hf, _, tid := makeTestVars()
-	hf.insertTuple(&t1, tid)
+func makeTestVars(t *testing.T) (TupleDesc, Tuple, Tuple, *HeapFile, *BufferPool, TransactionID) {
+	bp, hf := makeTestFile(t, 3)
+	td, t1, t2 := makeTupleTestVars()
+	tid := NewTID()
+	bp.BeginTransaction(tid)
+	return td, t1, t2, hf, bp, tid
+}
+
+func TestHeapFileCreateAndInsert(t *testing.T) {
+	_, t1, t2, hf, _, tid := makeTestVars(t)
+	err := hf.insertTuple(&t1, tid)
+
 	hf.insertTuple(&t2, tid)
-	iter, _ := hf.Iterator(tid)
+	iter, err := hf.Iterator(tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
 	i := 0
 	for {
-		t, _ := iter()
-		if t == nil {
+		tup, err := iter()
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+
+		if tup == nil {
 			break
 		}
 		i = i + 1
 	}
 	if i != 2 {
-		t.Errorf("HeapFile iterator expected 2 tuples, got %d", i)
+		t.Fatalf("HeapFile iterator expected 2 tuples, got %d", i)
 	}
 }
 
-func TestDeleteHeapFile(t *testing.T) {
-	_, t1, t2, hf, _, tid := makeTestVars()
-	hf.insertTuple(&t1, tid)
-	hf.insertTuple(&t2, tid)
-
-	hf.deleteTuple(&t1, tid)
-	iter, _ := hf.Iterator(tid)
-	t3, _ := iter()
-	if t3 == nil {
-		t.Errorf("HeapFile iterator expected 1 tuple")
+func TestHeapFileDelete(t *testing.T) {
+	_, t1, t2, hf, _, tid := makeTestVars(t)
+	err := hf.insertTuple(&t1, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
 	}
-	hf.deleteTuple(&t2, tid)
-	iter, _ = hf.Iterator(tid)
-	t3, _ = iter()
+
+	err = hf.insertTuple(&t2, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	err = hf.deleteTuple(&t1, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	iter, err := hf.Iterator(tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	t3, err := iter()
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	if t3 == nil {
+		t.Fatalf("HeapFile iterator expected 1 tuple")
+	}
+
+	err = hf.deleteTuple(&t2, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	iter, err = hf.Iterator(tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	t3, err = iter()
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
 	if t3 != nil {
-		t.Errorf("HeapFile iterator expected 0 tuple")
+		t.Fatalf("HeapFile iterator expected 0 tuple")
 	}
 }
 
 func testSerializeN(t *testing.T, n int) {
-	td, t1, t2, hf, bp, _ := makeTestVars()
-	for i := 0; i < n; i++ {
-		tid := NewTID()
-		bp.BeginTransaction(tid)
-		err := hf.insertTuple(&t1, tid)
-		if err != nil {
-			t.Errorf(err.Error())
-			return
-		}
-		err = hf.insertTuple(&t2, tid)
-		if err != nil {
-			t.Errorf(err.Error())
-			return
-		}
+	bp, hf := makeTestFile(t, max(1, n/50))
+	_, t1, t2 := makeTupleTestVars()
 
-		// hack to force dirty pages to disk
-		// because CommitTransaction may not be implemented
-		// yet if this is called in lab 1 or 2
-		if i%10 == 0 {
-			for j := hf.NumPages() - 1; j > -1; j-- {
-				pg, err := bp.GetPage(hf, j, tid, ReadPerm)
-				if pg == nil || err != nil {
-					t.Fatal("page nil or error", err)
-				}
-				if (*pg).isDirty() {
-					(*hf).flushPage(pg)
-					(*pg).setDirty(false)
-				}
-			}
-		}
-
-		//commit frequently to prevent buffer pool from filling
-		//todo fix
-		bp.CommitTransaction(tid)
-
-	}
-	bp.FlushAllPages()
-	bp2 := NewBufferPool(1)
-	hf2, _ := NewHeapFile(TestingFile, &td, bp2)
 	tid := NewTID()
+	bp.BeginTransaction(tid)
+	for i := 0; i < n; i++ {
+		if err := hf.insertTuple(&t1, tid); err != nil {
+			t.Fatalf(err.Error())
+		}
+
+		if err := hf.insertTuple(&t2, tid); err != nil {
+			t.Fatalf(err.Error())
+		}
+	}
+	bp.CommitTransaction(tid)
+	bp.FlushAllPages()
+
+	bp2, catalog, err := MakeTestDatabase(1, "catalog.txt")
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	hf2, err := catalog.addTable("test", *hf.Descriptor())
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	tid = NewTID()
 	bp2.BeginTransaction(tid)
-	iter, _ := hf2.Iterator(tid)
+
+	iter, err := hf2.Iterator(tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
 	i := 0
-	for {
-		t, _ := iter()
-		if t == nil {
-			break
+	for tup, err := iter(); tup != nil; tup, err = iter() {
+		if err != nil {
+			t.Fatalf(err.Error())
 		}
 		i = i + 1
 	}
 	if i != 2*n {
-		t.Errorf("HeapFile iterator expected %d tuples, got %d", 2*n, i)
+		t.Fatalf("HeapFile iterator expected %d tuples, got %d", 2*n, i)
 	}
 
 }
-func TestSerializeSmallHeapFile(t *testing.T) {
+func TestHeapFileSerializeSmall(t *testing.T) {
 	testSerializeN(t, 2)
 }
 
-func TestSerializeLargeHeapFile(t *testing.T) {
+func TestHeapFileSerializeLarge(t *testing.T) {
 	testSerializeN(t, 2000)
 }
 
-func TestSerializeVeryLargeHeapFile(t *testing.T) {
+func TestHeapFileSerializeVeryLarge(t *testing.T) {
 	testSerializeN(t, 4000)
 }
 
-func TestLoadCSV(t *testing.T) {
-	_, _, _, hf, _, tid := makeTestVars()
+func TestHeapFileLoadCSV(t *testing.T) {
+	_, _, _, hf, _, tid := makeTestVars(t)
 	f, err := os.Open("test_heap_file.csv")
 	if err != nil {
-		t.Errorf("Couldn't open test_heap_file.csv")
-		return
+		t.Fatalf("Couldn't open test_heap_file.csv")
 	}
 	err = hf.LoadFromCSV(f, true, ",", false)
 	if err != nil {
@@ -170,22 +189,35 @@ func TestLoadCSV(t *testing.T) {
 		i = i + 1
 	}
 	if i != 384 {
-		t.Errorf("HeapFile iterator expected 384 tuples, got %d", i)
+		t.Fatalf("HeapFile iterator expected 384 tuples, got %d", i)
 	}
 }
 
 func TestHeapFilePageKey(t *testing.T) {
-	td, t1, _, hf, bp, tid := makeTestVars()
+	td, t1, _, hf, bp, tid := makeTestVars(t)
 
 	os.Remove(TestingFile2)
-	hf2, _ := NewHeapFile(TestingFile2, &td, bp)
+	hf2, err := NewHeapFile(TestingFile2, &td, bp)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 
 	for hf.NumPages() < 2 {
-		hf.insertTuple(&t1, tid)
-		hf2.insertTuple(&t1, tid)
+		err = hf.insertTuple(&t1, tid)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+
+		err = hf2.insertTuple(&t1, tid)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+
 		if hf.NumPages() == 0 {
 			t.Fatalf("Heap file should have at least one page after insertion.")
 		}
+
+		bp.FlushAllPages()
 	}
 
 	if hf.NumPages() != hf2.NumPages() || hf.NumPages() != 2 {
@@ -194,13 +226,92 @@ func TestHeapFilePageKey(t *testing.T) {
 
 	for i := 0; i < hf.NumPages(); i++ {
 		if hf.pageKey(i) != hf.pageKey(i) {
-			t.Errorf("Expected equal pageKey")
+			t.Fatalf("Expected equal pageKey")
 		}
 		if hf.pageKey(i) == hf.pageKey((i+1)%hf.NumPages()) {
-			t.Errorf("Expected non-equal pageKey for different pages")
+			t.Fatalf("Expected non-equal pageKey for different pages")
 		}
 		if hf.pageKey(i) == hf2.pageKey(i) {
-			t.Errorf("Expected non-equal pageKey for different heapfiles")
+			t.Fatalf("Expected non-equal pageKey for different heapfiles")
 		}
+	}
+}
+
+func TestHeapFileSize(t *testing.T) {
+	_, t1, _, hf, bp, _ := makeTestVars(t)
+
+	tid := NewTID()
+	bp.BeginTransaction(tid)
+	hf.insertTuple(&t1, tid)
+	page, err := bp.GetPage(hf, 0, tid, ReadPerm)
+	if err != nil {
+		t.Fatalf("unexpected error, getPage, %s", err.Error())
+	}
+	hf.flushPage(page)
+	info, err := os.Stat(TestingFile)
+	if err != nil {
+		t.Fatalf("unexpected error, stat, %s", err.Error())
+	}
+	if info.Size() != int64(PageSize) {
+		t.Fatalf("heap file page is not %d bytes;  NOTE:  This error may be OK, but many implementations that don't write full pages break.", PageSize)
+	}
+}
+
+func TestHeapFileSetDirty(t *testing.T) {
+	if os.Getenv("LAB") == "5" {
+		t.Skip("This test is only valid up to Lab 4. Skipping")
+	}
+
+	_, t1, _, hf, bp, tid := makeTestVars(t)
+	for i := 0; i < 308; i++ {
+		err := hf.insertTuple(&t1, tid)
+		if err != nil && (i == 306 || i == 307) {
+			return
+		} else if err != nil {
+			t.Fatalf("%v", err)
+		}
+	}
+	bp.CommitTransaction(tid)
+	t.Fatalf("Expected error due to all pages in BufferPool being dirty")
+}
+
+func TestHeapFileDirtyBit(t *testing.T) {
+	_, t1, _, hf, bp, _ := makeTestVars(t)
+
+	tid := NewTID()
+	bp.BeginTransaction(tid)
+	hf.insertTuple(&t1, tid)
+	hf.insertTuple(&t1, tid)
+	page, _ := bp.GetPage(hf, 0, tid, ReadPerm)
+	if !page.isDirty() {
+		t.Fatalf("Expected page to be dirty")
+	}
+}
+
+func TestHeapFileIteratorExtra(t *testing.T) {
+	_, t1, _, hf, bp, _ := makeTestVars(t)
+	tid := NewTID()
+	bp.BeginTransaction(tid)
+
+	it, err := hf.Iterator(tid)
+	_, err = it()
+	if err != nil {
+		t.Fatalf("Empty heap file iterator should return nil,nil")
+	}
+	hf.insertTuple(&t1, tid)
+	it, err = hf.Iterator(tid)
+	pg, err := it()
+	if err != nil {
+		t.Fatalf("Iterating over heap file with one tuple returned error %s", err.Error())
+	}
+	if pg == nil {
+		t.Fatalf("Should have gotten 1 page in heap file iterator")
+	}
+	pg, err = it()
+	if pg != nil {
+		t.Fatalf("More than 1 page in heap file iterator!")
+	}
+	if err != nil {
+		t.Fatalf("Iterator returned error at end, expected nil, nil, got nil, %s", err.Error())
 	}
 }

@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-
-	"golang.org/x/exp/constraints"
 )
 
 type GoDBErrorCode int
@@ -26,13 +24,15 @@ const (
 	IllegalTransactionError GoDBErrorCode = iota
 )
 
+//go:generate stringer -type=GoDBErrorCode
+
 type GoDBError struct {
 	code      GoDBErrorCode
 	errString string
 }
 
 func (e GoDBError) Error() string {
-	return fmt.Sprintf("code %d;  err: %s", e.code, e.errString)
+	return fmt.Sprintf("err: %s; msg: %s", e.code.String(), e.errString)
 }
 
 const (
@@ -41,21 +41,22 @@ const (
 )
 
 type Page interface {
-	//these methods are used by buffer pool to
-	//manage pages
+	// these methods are used by buffer pool to manage pages
 	isDirty() bool
-	setDirty(dirty bool)
-	getFile() *DBFile
+	setDirty(tid TransactionID, dirty bool)
+	getFile() DBFile
 }
 
 type DBFile interface {
 	insertTuple(t *Tuple, tid TransactionID) error
 	deleteTuple(t *Tuple, tid TransactionID) error
 
-	//methods used by buffer pool to manage retrieval of pages
-	readPage(pageNo int) (*Page, error)
-	flushPage(page *Page) error
+	// methods used by buffer pool to manage retrieval of pages
+	readPage(pageNo int) (Page, error)
+	flushPage(page Page) error
 	pageKey(pgNo int) any //uint64
+
+	NumPages() int
 
 	Operator
 }
@@ -88,20 +89,51 @@ var BoolOpMap = map[string]BoolOp{
 	"like": OpLike,
 }
 
-func evalPred[T constraints.Ordered](i1 T, i2 T, op BoolOp) bool {
+func (i1 IntField) EvalPred(v2 DBValue, op BoolOp) bool {
+	i2, ok := v2.(IntField)
+	if !ok {
+		return false
+	}
+	x1 := i1.Value
+	x2 := i2.Value
 	switch op {
 	case OpEq:
-		return i1 == i2
+		return x1 == x2
 	case OpNeq:
-		return i1 != i2
+		return x1 != x2
 	case OpGt:
-		return i1 > i2
+		return x1 > x2
 	case OpGe:
-		return i1 >= i2
+		return x1 >= x2
 	case OpLt:
-		return i1 < i2
+		return x1 < x2
 	case OpLe:
-		return i1 <= i2
+		return x1 <= x2
+	default:
+		return false
+	}
+}
+
+func (i1 StringField) EvalPred(v2 DBValue, op BoolOp) bool {
+	i2, ok := v2.(StringField)
+	if !ok {
+		return false
+	}
+	x1 := i1.Value
+	x2 := i2.Value
+	switch op {
+	case OpEq:
+		return x1 == x2
+	case OpNeq:
+		return x1 != x2
+	case OpGt:
+		return x1 > x2
+	case OpGe:
+		return x1 >= x2
+	case OpLt:
+		return x1 < x2
+	case OpLe:
+		return x1 <= x2
 	case OpLike:
 		s1, ok := any(i1).(string)
 		if !ok {
@@ -115,7 +147,7 @@ func evalPred[T constraints.Ordered](i1 T, i2 T, op BoolOp) bool {
 		regex = strings.Replace(regex, "%", ".*?", -1)
 		match, _ := regexp.MatchString(regex, s1)
 		return match
+	default:
+		return false
 	}
-	return false
-
 }

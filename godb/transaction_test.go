@@ -9,7 +9,9 @@ import (
 	"time"
 )
 
-func TestTid(t *testing.T) {
+// This test does not have credit and serves merely as a sanity check since
+// NewTID() should have been implemented for you.
+func TestTransactionTid(t *testing.T) {
 	tid := NewTID()
 	tid2 := NewTID()
 	var tid3 = tid
@@ -25,8 +27,7 @@ const numConcurrentThreads int = 20
 
 var c chan int = make(chan int, numConcurrentThreads*2)
 
-func readXaction(hf *HeapFile, bp *BufferPool, wg *sync.WaitGroup) {
-
+func readXaction(hf DBFile, bp *BufferPool, wg *sync.WaitGroup) {
 	for {
 	start:
 		tid := NewTID()
@@ -75,9 +76,7 @@ func readXaction(hf *HeapFile, bp *BufferPool, wg *sync.WaitGroup) {
 	}
 }
 
-func writeXaction(hf *HeapFile, bp *BufferPool, writeTuple Tuple, wg *sync.WaitGroup) {
-	//_, t1, _, _, _ := makeTestVars()
-
+func writeXaction(hf DBFile, bp *BufferPool, writeTuple Tuple, wg *sync.WaitGroup) {
 	for {
 	start:
 		tid := NewTID()
@@ -98,12 +97,18 @@ func writeXaction(hf *HeapFile, bp *BufferPool, writeTuple Tuple, wg *sync.WaitG
 }
 
 func TestTransactions(t *testing.T) {
+	_, t1, t2, _, _, _ := makeTestVars(t)
+	bp, catalog, err := MakeTestDatabase(20, "catalog.txt")
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 
-	_, t1, t2, _, _, _ := makeTestVars()
-	bp := NewBufferPool(20)
 	tid := NewTID()
 	bp.BeginTransaction(tid)
-	hf, _ := NewHeapFile(TestingFile, &t1.Desc, bp)
+	hf, err := catalog.GetTable("t")
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 	var wg sync.WaitGroup
 
 	for i := 0; i < 1000; i++ {
@@ -119,6 +124,7 @@ func TestTransactions(t *testing.T) {
 		}
 	}
 	bp.CommitTransaction(tid)
+
 	wg.Add(numConcurrentThreads * 2)
 
 	for i := 0; i < numConcurrentThreads; i++ {
@@ -143,7 +149,7 @@ func TestTransactions(t *testing.T) {
 }
 
 func transactionTestSetUpVarLen(t *testing.T, tupCnt int, pgCnt int) (*BufferPool, *HeapFile, TransactionID, TransactionID, Tuple, Tuple) {
-	_, t1, t2, hf, bp, _ := makeTestVars()
+	_, t1, t2, hf, bp, _ := makeTestVars(t)
 
 	csvFile, err := os.Open(fmt.Sprintf("txn_test_%d_%d.csv", tupCnt, pgCnt))
 	if err != nil {
@@ -166,7 +172,7 @@ func transactionTestSetUp(t *testing.T) (*BufferPool, *HeapFile, TransactionID, 
 	return bp, hf, tid1, tid2, t1
 }
 
-func TestAttemptTransactionTwice(t *testing.T) {
+func TestTransactionTwice(t *testing.T) {
 	bp, hf, tid1, tid2, _ := transactionTestSetUp(t)
 	bp.GetPage(hf, 0, tid1, ReadPerm)
 	bp.GetPage(hf, 1, tid1, WritePerm)
@@ -180,9 +186,9 @@ func testTransactionComplete(t *testing.T, commit bool) {
 	bp, hf, tid1, tid2, t1 := transactionTestSetUp(t)
 
 	pg, _ := bp.GetPage(hf, 2, tid1, WritePerm)
-	heapp := (*pg).(*heapPage)
+	heapp := pg.(*heapPage)
 	heapp.insertTuple(&t1)
-	heapp.setDirty(true)
+	heapp.setDirty(tid1, true)
 
 	if commit {
 		bp.CommitTransaction(tid1)
@@ -193,7 +199,7 @@ func testTransactionComplete(t *testing.T, commit bool) {
 	bp.FlushAllPages()
 
 	pg, _ = bp.GetPage(hf, 2, tid2, WritePerm)
-	heapp = (*pg).(*heapPage)
+	heapp = pg.(*heapPage)
 	iter := heapp.tupleIter()
 
 	found := false
@@ -240,16 +246,28 @@ func (i *Singleton) Iterator(tid TransactionID) (func() (*Tuple, error), error) 
 	}, nil
 }
 
-// Run threads transactions, each each of which reads
-// a single tuple from a page, deletes the tuple, and re-inserts
-// it with an incremented value.
-// There will be deadlocks, so your deadlock handling will have to be correct to allow
-// all transactions to be committed and the value to be incremented threads times.
+// Run threads transactions, each each of which reads a single tuple from a
+// page, deletes the tuple, and re-inserts it with an incremented value. There
+// will be deadlocks, so your deadlock handling will have to be correct to allow
+// all transactions to be committed and the value to be incremented threads
+// times.
 func validateTransactions(t *testing.T, threads int) {
 	bp, hf, _, _, _, t2 := transactionTestSetUpVarLen(t, 1, 1)
 
 	var startWg, readyWg sync.WaitGroup
 	startChan := make(chan struct{})
+
+	// sleep for an increasingly long time after deadlocks. this backoff helps avoid starvation
+	nDeadlocks := 0
+	var nDeadlocksMutex sync.Mutex
+	sleepAfterDeadlock := func(thrId int, err error) {
+		nDeadlocksMutex.Lock()
+		nDeadlocks++
+		t.Logf("thread %d operation failed: %v deadlock #%v", thrId, err, nDeadlocks)
+		sleepTime := time.Duration(rand.Intn(int(nDeadlocks) + 1))
+		nDeadlocksMutex.Unlock()
+		time.Sleep(sleepTime * time.Millisecond)
+	}
 
 	incrementer := func(thrId int) {
 		// Signal that this goroutine is ready
@@ -258,7 +276,7 @@ func validateTransactions(t *testing.T, threads int) {
 		// Wait for the signal to start
 		<-startChan
 
-		for tid := TransactionID(nil); ; bp.AbortTransaction(tid) {
+		for tid := TransactionID(0); ; bp.AbortTransaction(tid) {
 			tid = NewTID()
 			bp.BeginTransaction(tid)
 			iter1, err := hf.Iterator(tid)
@@ -268,6 +286,7 @@ func validateTransactions(t *testing.T, threads int) {
 
 			readTup, err := iter1()
 			if err != nil {
+				sleepAfterDeadlock(thrId, err)
 				continue
 			}
 
@@ -278,8 +297,6 @@ func validateTransactions(t *testing.T, threads int) {
 					IntField{readTup.Fields[1].(IntField).Value + 1},
 				}}
 
-			time.Sleep(1 * time.Millisecond)
-
 			dop := NewDeleteOp(hf, hf)
 			iterDel, err := dop.Iterator(tid)
 			if err != nil {
@@ -287,6 +304,7 @@ func validateTransactions(t *testing.T, threads int) {
 			}
 			delCnt, err := iterDel()
 			if err != nil {
+				sleepAfterDeadlock(thrId, err)
 				continue
 			}
 			if delCnt.Fields[0].(IntField).Value != 1 {
@@ -299,6 +317,7 @@ func validateTransactions(t *testing.T, threads int) {
 			}
 			insCnt, err := iterIns()
 			if err != nil {
+				sleepAfterDeadlock(thrId, err)
 				continue
 			}
 
@@ -339,24 +358,23 @@ func validateTransactions(t *testing.T, threads int) {
 	}
 }
 
-func TestSingleThread(t *testing.T) {
+func TestTransactionSingleThread(t *testing.T) {
 	validateTransactions(t, 1)
 }
 
-func TestTwoThreads(t *testing.T) {
+func TestTransactionTwoThreads(t *testing.T) {
 	validateTransactions(t, 2)
 }
 
-func TestFiveThreads(t *testing.T) {
+func TestTransactionFiveThreads(t *testing.T) {
 	validateTransactions(t, 5)
 }
 
-// func TestTenThreads(t *testing.T) {
-// 	validateTransactions(t, 10)
-// }
-
-func TestAllDirtyFails(t *testing.T) {
-	td, t1, _, hf, bp, tid := makeTestVars()
+func TestTransactionAllDirtyFails(t *testing.T) {
+	if os.Getenv("LAB") == "5" {
+		t.Skip("Test is valid up through Lab 4. Skipping.")
+	}
+	td, t1, _, hf, bp, tid := makeTestVars(t)
 
 	for hf.NumPages() < 3 {
 		hf.insertTuple(&t1, tid)
@@ -384,7 +402,7 @@ func TestAllDirtyFails(t *testing.T) {
 	}
 }
 
-func TestAbortEviction(t *testing.T) {
+func TestTransactionAbortEviction(t *testing.T) {
 	tupExists := func(t0 Tuple, tid TransactionID, hf *HeapFile) (bool, error) {
 		iter, err := hf.Iterator(tid)
 		if err != nil {
@@ -401,7 +419,7 @@ func TestAbortEviction(t *testing.T) {
 		return false, nil
 	}
 
-	_, t1, _, hf, bp, tid := makeTestVars()
+	_, t1, _, hf, bp, tid := makeTestVars(t)
 	hf.insertTuple(&t1, tid)
 	if exists, err := tupExists(t1, tid, hf); !(exists == true && err == nil) {
 		t.Errorf("Tuple should exist")
@@ -411,7 +429,7 @@ func TestAbortEviction(t *testing.T) {
 	tid2 := NewTID()
 	bp.BeginTransaction(tid2)
 
-	// tuple should not exist after abortion
+	// tuple should not exist after abort
 	if exists, err := tupExists(t1, tid2, hf); !(exists == false && err == nil) {
 		t.Errorf("Tuple should not exist")
 	}

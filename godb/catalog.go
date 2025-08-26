@@ -3,56 +3,74 @@ package godb
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
+	"sort"
 	"strings"
 )
 
 type Table struct {
+	id   int
 	name string
 	desc TupleDesc
+
+	// statistics
+	stats *TableStats
+
+	file DBFile
 }
 
 type Catalog struct {
-	tables    []*Table
-	tableMap  map[string]*Table
-	columnMap map[string][]*Table
-	bp        *BufferPool
-	rootPath  string
+	tableMap   map[string]*Table
+	columnMap  map[string][]*Table
+	bufferPool *BufferPool
+	rootPath   string
+	filePath   string
 }
 
 func (c *Catalog) SaveToFile(catalogFile string, rootPath string) error {
-	catalogString := c.CatalogString()
 	f, err := os.OpenFile(rootPath+"/"+catalogFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
-	f.WriteString(catalogString)
+	f.WriteString(c.String())
 	f.Close()
 	return nil
 }
 
-func (c *Catalog) dropTable(table string) error {
-	for i, t := range c.tables {
-		if t.name == table {
-			c.tableMap[table] = nil
-			c.columnMap[table] = nil
-			c.tables = append(c.tables[:i], c.tables[i+1:]...)
-			os.Remove(c.tableNameToFile(table))
-			return nil
-		}
+func (c *Catalog) dropTable(tableName string) error {
+	_, ok := c.tableMap[tableName]
+	if !ok {
+		return GoDBError{NoSuchTableError, "couldn't find table to drop"}
 	}
-	return GoDBError{NoSuchTableError, "couldn't find table to drop"}
+
+	delete(c.tableMap, tableName)
+	for cn, ts := range c.columnMap {
+		tsFiltered := make([]*Table, 0)
+		for _, t := range ts {
+			if t.name != tableName {
+				tsFiltered = append(tsFiltered, t)
+			}
+		}
+		c.columnMap[cn] = tsFiltered
+	}
+	return nil
 }
 
-func ImportCatalogFromCSVs(catalogFile string, bp *BufferPool, rootPath string, tableSuffix string, separator string) error {
+func ImportCatalogFromCSVs(
+	catalogFile string,
+	bp *BufferPool,
+	rootPath string,
+	tableSuffix string,
+	separator string) error {
 	c, err := NewCatalogFromFile(catalogFile, bp, rootPath)
 	if err != nil {
 		return err
 	}
-	for _, t := range c.tables {
-		fmt.Printf("Doing %s\n", t.name)
+	for _, t := range c.tableMap {
 		fileName := rootPath + "/" + t.name + "." + tableSuffix
-		hf, err := NewHeapFile(c.tableNameToFile(t.name), t.desc.copy(), c.bp)
+		log.Printf("Loading %s from %s...\n", t.name, fileName)
+		hf, err := NewHeapFile(c.tableNameToFile(t.name), t.desc.copy(), c.bufferPool)
 		if err != nil {
 			return err
 		}
@@ -64,17 +82,14 @@ func ImportCatalogFromCSVs(catalogFile string, bp *BufferPool, rootPath string, 
 		if err != nil {
 			return err
 		}
-
 	}
 	return nil
 }
 
-func parseCatalogFile(catalogFile string, rootPath string) ([]TupleDesc, []string, error) {
-	var tables []TupleDesc
-	var names []string
-	f, err := os.Open(rootPath + "/" + catalogFile)
+func (c *Catalog) parseCatalogFile() error {
+	f, err := os.Open(c.rootPath + "/" + c.filePath)
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
 	scanner := bufio.NewScanner(f)
 
@@ -83,113 +98,177 @@ func parseCatalogFile(catalogFile string, rootPath string) ([]TupleDesc, []strin
 		line := strings.ToLower(scanner.Text())
 		sep := strings.Split(line, "(")
 		if len(sep) != 2 {
-			return nil, nil, GoDBError{ParseError, fmt.Sprintf("expected one paren in catalog entry, got %d (%s)", len(sep), line)}
+			return GoDBError{ParseError, fmt.Sprintf("expected one paren in catalog entry, got %d (%s)", len(sep), line)}
 		}
 		tableName := strings.TrimSpace(sep[0])
 		rest := strings.Trim(sep[1], "()")
 		fields := strings.Split(rest, ",")
+
 		var fieldArray []FieldType
 		for _, f := range fields {
 			f := strings.TrimSpace(f)
 			nameType := strings.Split(f, " ")
-			if len(nameType) != 2 {
-				return nil, nil, GoDBError{ParseError, fmt.Sprintf("malformed catalog entry %s (line %s)", nameType, line)}
+			if len(nameType) < 2 || len(nameType) > 4 {
+				return GoDBError{ParseError, fmt.Sprintf("malformed catalog entry %s (line %s)", nameType, line)}
 			}
+
+			name := nameType[0]
+			fieldType := FieldType{name, "", IntType}
 			switch nameType[1] {
 			case "int":
 				fallthrough
 			case "integer":
-				fieldArray = append(fieldArray, FieldType{nameType[0], "", IntType})
+				fieldType.Ftype = IntType
 			case "string":
 				fallthrough
 			case "varchar":
 				fallthrough
 			case "text":
-				fieldArray = append(fieldArray, FieldType{nameType[0], "", StringType})
+				fieldType.Ftype = StringType
 			default:
-				return nil, nil, GoDBError{ParseError, fmt.Sprintf("unknown type %s (line %s)", nameType[1], line)}
+				return GoDBError{ParseError, fmt.Sprintf("unknown type %s (line %s)", nameType[1], line)}
 			}
+			fieldArray = append(fieldArray, fieldType)
 		}
-		tables = append(tables, TupleDesc{fieldArray})
-		names = append(names, tableName)
-	}
-	return tables, names, nil
 
+		_, err := c.addTable(tableName, TupleDesc{fieldArray})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func NewCatalog(catalogFile string, bp *BufferPool, rootPath string) *Catalog {
+	return &Catalog{make(map[string]*Table), make(map[string][]*Table), bp, rootPath, catalogFile}
 }
 
 func NewCatalogFromFile(catalogFile string, bp *BufferPool, rootPath string) (*Catalog, error) {
-	tabs, names, err := parseCatalogFile(catalogFile, rootPath)
+	c := NewCatalog(catalogFile, bp, rootPath)
+	if err := c.parseCatalogFile(); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// Add a new table to the catalog.
+//
+// Returns an error if the table already exists.
+func (c *Catalog) addTable(named string, desc TupleDesc) (DBFile, error) {
+	f, err := c.GetTable(named)
+	if err == nil {
+		return f, GoDBError{DuplicateTableError, fmt.Sprintf("a table named '%s' already exists", named)}
+	}
+
+	hf, err := NewHeapFile(c.tableNameToFile(named), &desc, c.bufferPool)
 	if err != nil {
 		return nil, err
 	}
-	c := &Catalog{make([]*Table, 0), make(map[string]*Table), make(map[string][]*Table), bp, rootPath}
-	for i, t := range tabs {
-		c.addTable(names[i], t)
+
+	t := &Table{len(c.tableMap), named, desc, nil, hf}
+	c.tableMap[named] = t
+	for _, f := range desc.Fields {
+		mapList := c.columnMap[f.Fname]
+		if mapList == nil {
+			mapList = make([]*Table, 0)
+		}
+		c.columnMap[f.Fname] = append(mapList, t)
 	}
 
-	return c, nil
-
+	return hf, nil
 }
 
-func (c *Catalog) addTable(named string, desc TupleDesc) error {
-	_, err := c.GetTable(named)
-	if err != nil {
-		t := &Table{named, desc}
-		c.tables = append(c.tables, t)
-		c.tableMap[named] = t
-		for _, f := range desc.Fields {
-			mapList := c.columnMap[f.Fname]
-			if mapList == nil {
-				mapList = make([]*Table, 0)
-			}
-			mapList = append(mapList, t)
-			c.columnMap[f.Fname] = mapList
-		}
-		return nil
-	} else {
-		return GoDBError{DuplicateTableError, fmt.Sprintf("a table named '%s' already exists", named)}
-	}
+func (c *Catalog) ComputeTableStats() error {
+	// Dummy implementation, do not worry about it.
+	return nil
 }
 
 func (c *Catalog) tableNameToFile(tableName string) string {
 	return c.rootPath + "/" + tableName + ".dat"
-
 }
-func (c *Catalog) GetTable(named string) (DBFile, error) {
-	t := c.tableMap[named]
-	if t == nil {
+
+func (c *Catalog) GetTableInfo(named string) (*Table, error) {
+	t, ok := c.tableMap[named]
+	if !ok {
 		return nil, GoDBError{NoSuchTableError, fmt.Sprintf("no table '%s' found", named)}
 	}
-	return NewHeapFile(c.tableNameToFile(named), t.desc.copy(), c.bp)
+	return t, nil
+}
 
+func (c *Catalog) GetTable(named string) (DBFile, error) {
+	t, err := c.GetTableInfo(named)
+	if err != nil {
+		return nil, err
+	}
+	return t.file, nil
+}
+
+func (c *Catalog) GetTableInfoId(id int) (*Table, error) {
+	for _, t := range c.tableMap {
+		if t.id == id {
+			return t, nil
+		}
+	}
+	return nil, GoDBError{NoSuchTableError, fmt.Sprintf("no table '%d' found", id)}
+}
+
+func (c *Catalog) GetTableInfoDBFile(f DBFile) (*Table, error) {
+	for _, t := range c.tableMap {
+		if t.file == f {
+			return t, nil
+		}
+	}
+	return nil, GoDBError{NoSuchTableError, "table not found"}
+}
+
+// Get the statistics for a table.
+//
+// Returns nil if the table does not exist.
+func (c *Catalog) GetTableStats(named string) *TableStats {
+	t, err := c.GetTableInfo(named)
+	if err != nil {
+		return nil
+	}
+	return t.stats
 }
 
 func (c *Catalog) findTablesWithColumn(named string) []*Table {
-	t := c.columnMap[named]
-	return t
-
+	return c.columnMap[named]
 }
 
 func (c *Catalog) NumTables() int {
-	return len(c.tables)
+	return len(c.tableMap)
 }
 
-func (c *Catalog) GetTableIdx(t int) (DBFile, error) {
-	tab := c.tables[t]
-	return c.GetTable(tab.name)
+func (t *Table) String() string {
+	var buf strings.Builder
+	buf.WriteString(t.name)
+	buf.WriteByte('(')
+	for i, f := range t.desc.Fields {
+		if i != 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString(f.Fname)
+		buf.WriteByte(' ')
+		buf.WriteString(f.Ftype.String())
+	}
+	buf.WriteString(")\n")
+	return buf.String()
+}
+
+func (c *Catalog) String() string {
+	var buf strings.Builder
+	keys := make([]string, 0, len(c.tableMap))
+	for k := range c.tableMap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, t := range keys {
+		buf.WriteString(c.tableMap[t].String())
+	}
+	return buf.String()
 }
 
 func (c *Catalog) CatalogString() string {
-	outStr := ""
-	for _, t := range c.tables {
-		fieldStr := "("
-		for i, f := range t.desc.Fields {
-			if i != 0 {
-				fieldStr = fieldStr + ", "
-			}
-			fieldStr = fieldStr + f.Fname + " " + typeNames[f.Ftype]
-		}
-		outStr = outStr + t.name + " " + fieldStr + ")\n"
-	}
-	return outStr
+	return c.String()
 }

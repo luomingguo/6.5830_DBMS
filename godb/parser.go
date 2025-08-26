@@ -50,6 +50,7 @@ func NewFieldSelectNode(table string, field string, alias string) LogicalSelectN
 	lsn.alias = alias
 	return lsn
 }
+
 func NewConstSelectNode(value string, alias string) LogicalSelectNode {
 	lsn := LogicalSelectNode{}
 	lsn.exprType = ExprConst
@@ -57,6 +58,7 @@ func NewConstSelectNode(value string, alias string) LogicalSelectNode {
 	lsn.alias = alias
 	return lsn
 }
+
 func NewStarSelectNode(table string) LogicalSelectNode {
 	lsn := LogicalSelectNode{}
 	lsn.exprType = ExprStar
@@ -64,6 +66,7 @@ func NewStarSelectNode(table string) LogicalSelectNode {
 	lsn.field = "*"
 	return lsn
 }
+
 func NewAggrSelectNode(op string, arg *LogicalSelectNode, alias string) LogicalSelectNode {
 	lsn := LogicalSelectNode{}
 	lsn.exprType = ExprAggr
@@ -81,6 +84,67 @@ func NewFuncSelectNode(op string, args []*LogicalSelectNode, alias string) Logic
 	lsn.alias = alias
 	lsn.args = args
 	return lsn
+}
+
+func (t SelectExprType) String() string {
+	switch t {
+	case ExprField:
+		return "ExprField"
+	case ExprConst:
+		return "ExprConst"
+	case ExprFunc:
+		return "ExprFunc"
+	case ExprStar:
+		return "ExprStar"
+	case ExprAggr:
+		return "ExprAggr"
+	default:
+		return "Unknown"
+	}
+}
+
+func (op BoolOp) String() string {
+	switch op {
+	case OpEq:
+		return "="
+	case OpNeq:
+		return "<>"
+	case OpGe:
+		return ">="
+	case OpGt:
+		return ">"
+	case OpLe:
+		return "<="
+	case OpLt:
+		return "<"
+	case OpLike:
+		return " LIKE "
+	default:
+		return "??"
+	}
+}
+
+func (s *LogicalJoinNode) String() string {
+	return fmt.Sprintf("%v%v%v", s.left, s.predOp, s.right)
+}
+
+func (s *LogicalSelectNode) String() string {
+	switch s.exprType {
+	case ExprField:
+		var b strings.Builder
+		if s.table != "" {
+			b.WriteString(s.table)
+			b.WriteString(".")
+		}
+		b.WriteString(s.field)
+		if s.alias != "" {
+			b.WriteString(" AS ")
+			b.WriteString(s.alias)
+		}
+		return b.String()
+	default:
+		return fmt.Sprintf("{%v %v %v %v %v %v %v %v}", s.exprType, s.table, s.field, s.funcOp, s.alias, s.value, s.args, s.cachedField)
+	}
 }
 
 func checkNameInTablesOrSubqueries(table string, field string, c *Catalog, subqueries []*LogicalPlan, ts []*LogicalTableNode) (string, error) {
@@ -113,9 +177,10 @@ func checkNameInTablesOrSubqueries(table string, field string, c *Catalog, subqu
 	return table, nil
 }
 
-// need to figure out which table & field this expression references, if any
-// if catalog is non null, will try to resolve table name from catalog
-// otherwise, will not
+// Returns the table & field this expression references, if any. If the expression references multiple tables,
+//
+// If catalog is non null, will try to resolve table name from catalog
+// otherwise, will not.
 func (lsn *LogicalSelectNode) getTableField(c *Catalog, subqueries []*LogicalPlan, ts []*LogicalTableNode) (string, string, error) {
 	if lsn.exprType == ExprConst {
 		return "", "", nil
@@ -186,28 +251,27 @@ type LogicalPlan struct {
 }
 
 func (p *LogicalPlan) getSubplanFields(c *Catalog) []*FieldType {
-	var nodes []*FieldType
-	for _, s := range p.selects {
+	var nodes []*FieldType = make([]*FieldType, len(p.selects))
+	for i, s := range p.selects {
 		_, field, _ := s.getTableField(c, p.subqueries, p.tables)
-		nodes = append(nodes, &FieldType{field, p.alias, UnknownType})
+		nodes[i] = &FieldType{field, p.alias, UnknownType}
 	}
 	return nodes
 }
 
+// Parse a where statement into a list of filters and joins.
 func parseWhere(c *Catalog, subqueries []*LogicalPlan, ts []*LogicalTableNode, expr sqlparser.Expr) ([]*LogicalFilterNode, []*LogicalJoinNode, error) {
 	switch expr := expr.(type) {
 	case *sqlparser.AndExpr:
-		//print("got and")
+		// Parse AND by parsing left and right sides
 		filterListLeft, joinListLeft, _ := parseWhere(c, subqueries, ts, expr.Left)
 		filterListRight, joinListRight, _ := parseWhere(c, subqueries, ts, expr.Right)
 		filterExprs := append(filterListLeft, filterListRight...)
 		joinExprs := append(joinListLeft, joinListRight...)
 		return filterExprs, joinExprs, nil
+
 	case *sqlparser.ComparisonExpr:
 		op := BoolOpMap[expr.Operator]
-		//print(op)
-		//print("got compare")
-
 		left, err := parseExpr(c, expr.Left, "")
 		if err != nil {
 			return nil, nil, err
@@ -226,20 +290,14 @@ func parseWhere(c *Catalog, subqueries []*LogicalPlan, ts []*LogicalTableNode, e
 			return nil, nil, err
 		}
 		if lTable != "" && rTable != "" && lTable != rTable { //join
-
 			if op != OpEq {
 				return nil, nil, GoDBError{IllegalOperationError, "only equality joins are supported"}
 			}
-			join := LogicalJoinNode{left, right, op}
-			lj := make([]*LogicalJoinNode, 1)
-			lj[0] = &join
-			return nil, lj, nil
+			return nil, []*LogicalJoinNode{{left, right, op}}, nil
 		} else {
-			filter := LogicalFilterNode{*left, *right, op}
-			lf := make([]*LogicalFilterNode, 1)
-			lf[0] = &filter
-			return lf, nil, nil
+			return []*LogicalFilterNode{{*left, *right, op}}, nil, nil
 		}
+
 	default:
 		return nil, nil, GoDBError{ParseError, "where expression with non value or column on RHS (disjunctions and nested where expressions are not supported)"}
 	}
@@ -259,9 +317,7 @@ func parseFrom(c *Catalog, t sqlparser.TableExpr) ([]*LogicalTableNode, []*Logic
 					return nil, nil, nil, err
 				}
 				subplan.alias = strings.ToLower(sqlparser.String(tableEx.As))
-				subplans := make([]*LogicalPlan, 1)
-				subplans[0] = subplan
-				return nil, subplans, nil, nil
+				return nil, []*LogicalPlan{subplan}, nil, nil
 			}
 		case sqlparser.SimpleTableExpr:
 			tableName := strings.ToLower(sqlparser.GetTableName(tableEx.Expr).CompliantName())
@@ -274,9 +330,7 @@ func parseFrom(c *Catalog, t sqlparser.TableExpr) ([]*LogicalTableNode, []*Logic
 				strings.ToLower(sqlparser.String(tableEx.As)),
 				&dbFile}
 			table.alias = strings.ToLower(sqlparser.String(tableEx.As))
-			tables := make([]*LogicalTableNode, 1)
-			tables[0] = &table
-			return tables, nil, nil, nil
+			return []*LogicalTableNode{&table}, nil, nil, nil
 		}
 	case *sqlparser.ParenTableExpr:
 		var (
@@ -319,14 +373,8 @@ func parseFrom(c *Catalog, t sqlparser.TableExpr) ([]*LogicalTableNode, []*Logic
 	return nil, nil, nil, GoDBError{ParseError, "unknown query type in parseFrom"}
 }
 
-func isAgg(funcName string) bool {
-	aggs := []string{"count", "sum", "avg", "min", "max"}
-	for _, s := range aggs {
-		if s == funcName {
-			return true
-		}
-	}
-	return false
+func isAgg(f string) bool {
+	return f == "count" || f == "sum" || f == "avg" || f == "min" || f == "max"
 }
 
 func parseExpr(c *Catalog, expr sqlparser.Expr, alias string) (*LogicalSelectNode, error) {
@@ -423,7 +471,6 @@ func parseSelect(c *Catalog, stmt sqlparser.SelectExpr) (*LogicalSelectNode, err
 		return nil, GoDBError{ParseError, fmt.Sprintf("unsupported expression type %s in select list", reflect.TypeOf(exprAlias))}
 
 	}
-
 }
 
 func extractAggs(s *LogicalSelectNode) []*LogicalSelectNode {
@@ -448,9 +495,6 @@ func parseStatement(c *Catalog, s *sqlparser.Select) (*LogicalPlan, error) {
 		joins    []*LogicalJoinNode
 		filters  []*LogicalFilterNode
 		aggs     []*LogicalSelectNode
-		selects  []*LogicalSelectNode
-		groupBys []*GroupBy
-		orderBys []*OrderByNode
 	)
 
 	for _, t := range from {
@@ -481,30 +525,33 @@ func parseStatement(c *Catalog, s *sqlparser.Select) (*LogicalPlan, error) {
 		filters = append(filters, newFilters...)
 	}
 	//extract select list
-	for _, stmt := range s.SelectExprs {
+
+	var selects = make([]*LogicalSelectNode, len(s.SelectExprs))
+	for i, stmt := range s.SelectExprs {
 		sel, err := parseSelect(c, stmt)
 		if err != nil {
 			return nil, err
 		}
-		selects = append(selects, sel)
+		selects[i] = sel
 		aggs = append(aggs, extractAggs(sel)...)
 	}
 
-	for _, gby := range s.GroupBy {
+	var groupBys = make([]*GroupBy, len(s.GroupBy))
+	for i, gby := range s.GroupBy {
 		expr, err := parseExpr(c, gby, "")
 		if err != nil {
 			return nil, err
 		}
-		groupBys = append(groupBys, &GroupBy{expr})
+		groupBys[i] = &GroupBy{expr}
 	}
 
-	for _, oby := range s.OrderBy {
+	var orderBys = make([]*OrderByNode, len(s.OrderBy))
+	for i, oby := range s.OrderBy {
 		expr, err := parseExpr(c, oby.Expr, "")
 		if err != nil {
 			return nil, err
 		}
-		orderBys = append(orderBys, &OrderByNode{expr, oby.Direction == sqlparser.AscScr})
-
+		orderBys[i] = &OrderByNode{expr, oby.Direction == sqlparser.AscScr}
 	}
 
 	lim := s.Limit
@@ -522,6 +569,11 @@ func parseStatement(c *Catalog, s *sqlparser.Select) (*LogicalPlan, error) {
 	return &p, nil
 }
 
+// Given a table name tab, a field name, and a map between table names and operators, do one of the following:
+// 1. Return the operator corresponding to tab, if it exists
+// 2. Return the operator corresponding to the table of the field, if it exists
+//
+// Always updates the map to include the field's table if it is not already present
 func fieldToOp(tab string, field string, opMap map[string]*PlanNode) (*PlanNode, error) {
 	node := opMap[tab]
 
@@ -550,6 +602,7 @@ func fieldToOp(tab string, field string, opMap map[string]*PlanNode) (*PlanNode,
 	return node, nil
 }
 
+// Look up a FieldType in a PlanNode's descriptor given the field name and table name
 func fieldNameToField(table string, field string, node *PlanNode) (FieldType, error) {
 	op := node.op
 	var best FieldType
@@ -570,7 +623,7 @@ func fieldNameToField(table string, field string, node *PlanNode) (FieldType, er
 }
 
 type PlanNode struct {
-	op   Operator
+	op   *OperatorCard
 	desc *TupleDesc
 }
 
@@ -629,8 +682,7 @@ func (s *LogicalSelectNode) generateExpr(c *Catalog, inputDesc *TupleDesc, table
 		e := FieldExpr{field}
 		return &e, fieldName, nil
 	case ExprConst:
-
-		var fval any
+		var fval DBValue
 		constType := StringType
 		intFval, e := strconv.Atoi(s.value)
 		if e == nil {
@@ -716,70 +768,48 @@ func GetUnexportedField(field reflect.Value) interface{} {
 	return reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Interface()
 }
 
-func getStrFromObj(obj any) string {
-	var v reflect.Value
-	t := reflect.TypeOf(obj)
-	if t.Kind() == reflect.Pointer {
-		v = reflect.ValueOf(obj).Elem()
-	} else {
-		v = reflect.ValueOf(obj)
-	}
-	if reflect.TypeOf(v).Kind() != reflect.Struct {
-		return fmt.Sprintf("%v", obj)
-	}
-	for i := 0; i < v.NumField(); i++ {
-		v := GetUnexportedField(v.Field(i))
-		str, ok := v.(string)
-		if ok {
-			return str
-		}
-	}
-	return fmt.Sprintf("%v", obj)
-}
-
-func PrintPhysicalPlan(o Operator, indent string) {
-	switch op := o.(type) {
-	case *EqualityJoin[int64]:
-		fmt.Printf("%sJoin, %+v == %+v\n", indent, exprToStr(op.leftField), exprToStr(op.rightField))
+func OutputPhysicalPlan(printf func(format string, a ...any), o Operator, indent string) {
+	oc := o.(*OperatorCard)
+	switch op := oc.Op.(type) {
+	case *EqualityJoin:
+		printf("%sJoin, %+v == %+v, card:%d\n", indent, exprToStr(op.leftField), exprToStr(op.rightField), oc.Cardinality)
 		indent = indent + "\t"
-		PrintPhysicalPlan(*op.left, indent)
-		PrintPhysicalPlan(*op.right, indent)
-	case *EqualityJoin[string]:
-		fmt.Printf("%sJoin, %+v == %+v\n", indent, exprToStr(op.leftField), exprToStr(op.rightField))
-		indent = indent + "\t"
-		PrintPhysicalPlan(*op.left, indent)
-		PrintPhysicalPlan(*op.right, indent)
-
+		OutputPhysicalPlan(printf, *op.left, indent)
+		OutputPhysicalPlan(printf, *op.right, indent)
 	case *Project:
 		selectStr := ""
 		for _, ex := range op.selectFields {
 			selectStr += exprToStr(ex) + ","
 		}
-		fmt.Printf("%sProject %+v -> %+v\n", indent, selectStr, op.outputNames)
+		printf("%sProject %+v -> %+v, card:%d\n", indent, selectStr, op.outputNames, oc.Cardinality)
 		indent = indent + "\t"
-		PrintPhysicalPlan(op.child, indent)
-	case *Filter[int64]:
-		fmt.Printf("%sFilter %s %s %s\n", indent, exprToStr(op.left), opToStr(op.op), exprToStr(op.right))
+		OutputPhysicalPlan(printf, op.child, indent)
+
+	case *Filter:
+		printf("%sFilter %s %s %s, card:%d", indent, exprToStr(op.left), opToStr(op.op), exprToStr(op.right), oc.Cardinality)
 		indent = indent + "\t"
-		PrintPhysicalPlan(op.child, indent)
-	case *Filter[string]:
-		fmt.Printf("%sFilter %s %s %s\n", indent, exprToStr(op.left), opToStr(op.op), exprToStr(op.right))
-		indent = indent + "\t"
-		PrintPhysicalPlan(op.child, indent)
+		OutputPhysicalPlan(printf, op.child, indent)
+
 	case *HeapFile:
-		fmt.Printf("%sHeap Scan %v\n", indent, getStrFromObj(op))
+		printf("%sHeap Scan %s, card:%d\n", indent, op.BackingFile(), oc.Cardinality)
+
 	case *OrderBy:
 		orderStr := ""
-		for _, ex := range op.orderBy {
-			orderStr += exprToStr(ex) + ","
+		if len(op.orderBy) > 0 {
+			orderStr += exprToStr(op.orderBy[0])
+			for i := 1; i < len(op.orderBy); i++ {
+				orderStr += ", " + exprToStr(op.orderBy[i])
+			}
 		}
-		fmt.Printf("%sOrder By %s\n", indent, orderStr)
+		printf("%sOrder By %s, card:%d\n", indent, orderStr, oc.Cardinality)
 		indent = indent + "\t"
-		PrintPhysicalPlan(op.child, indent)
+		OutputPhysicalPlan(printf, op.child, indent)
+
 	case *LimitOp:
-		fmt.Printf("%sLimit %s\n", indent, exprToStr(op.limitTups))
+		printf("%sLimit %s, card:%d\n", indent, exprToStr(op.limitTups), oc.Cardinality)
 		indent = indent + "\t"
-		PrintPhysicalPlan(op.child, indent)
+		OutputPhysicalPlan(printf, op.child, indent)
+
 	case *Aggregator:
 		gbyStr := ""
 		if len(op.groupByFields) > 0 {
@@ -791,42 +821,105 @@ func PrintPhysicalPlan(o Operator, indent string) {
 
 		aggStr := ""
 		for _, ex := range op.newAggState {
-
 			aggStr += fmt.Sprintf("%s(%s),", reflect.TypeOf(ex), ex.GetTupleDesc().HeaderString(false))
 		}
 
-		fmt.Printf("%sAggregate, %s %s\n", indent, aggStr, gbyStr)
+		printf("%sAggregate, %s %s, card:%d\n", indent, aggStr, gbyStr, oc.Cardinality)
 		indent = indent + "\t"
-		PrintPhysicalPlan(op.child, indent)
+		OutputPhysicalPlan(printf, op.child, indent)
+
 	default:
-		fmt.Printf("%sUnknown op, %s\n", indent, reflect.TypeOf(op))
+		printf("%sUnknown op, %s\n", indent, reflect.TypeOf(op))
 	}
 }
 
-func makePhysicalPlan(c *Catalog, plan *LogicalPlan) (Operator, error) {
-	//build mapping from table names / aliases to operators
+func PrintPhysicalPlan(o Operator, indent string) {
+	OutputPhysicalPlan(func(s string, a ...any) { fmt.Printf(s, a...) }, o, indent)
+}
 
-	tableMap := make(map[string]*PlanNode)
+// Wraps an operator with a cardinality estimate.
+type OperatorCard struct {
+	Cardinality int
+	Op          Operator
+}
+
+func (o *OperatorCard) Descriptor() *TupleDesc {
+	return o.Op.Descriptor()
+}
+
+func (o *OperatorCard) Iterator(tid TransactionID) (func() (*Tuple, error), error) {
+	return o.Op.Iterator(tid)
+}
+
+func NewOperatorCard(op Operator, card int) *OperatorCard {
+	_, ok := op.(*OperatorCard)
+	if ok {
+		panic("cannot wrap an operator card in another operator card")
+	}
+	return &OperatorCard{card, op}
+}
+
+var EnableJoinOptimization = true
+
+type DummyStats struct {
+}
+
+func (s *DummyStats) EstimateScanCost() float64 {
+	return 1000.0
+}
+
+func (s *DummyStats) EstimateCardinality(sel float64) int {
+	return 100000
+}
+
+func (s *DummyStats) EstimateSelectivity(field string, op BoolOp, val DBValue) (float64, error) {
+	return 1.0, nil
+}
+
+type TableAndField struct {
+	table string
+	field string
+}
+
+func makePhysicalPlan(c *Catalog, plan *LogicalPlan) (*OperatorCard, error) {
+	tableMap := make(map[string]*PlanNode) // mapping from table aliases to operators
+	tableStats := make(map[string]Stats)   // mapping from table aliases to table stats
+	sel := make(map[string]float64)        // mapping from table aliases to selectivities
 
 	for _, p := range plan.subqueries {
 		subPhysP, err := makePhysicalPlan(c, p)
 		if err != nil {
 			return nil, err
 		}
-		var td *TupleDesc = subPhysP.Descriptor()
+		td := subPhysP.Descriptor()
 		td.setTableAlias(p.alias)
-		//td = td.setTableAlias(p.alias)
 		tableMap[p.alias] = &PlanNode{subPhysP, td}
+		tableStats[p.alias] = &DummyStats{}
+		sel[p.alias] = 1.0
 	}
+
 	for _, t := range plan.tables {
+		var stats Stats
+		stats = c.GetTableStats(t.tableName)
+		if stats == nil {
+			stats = &DummyStats{}
+		}
+
 		name := t.tableName
 		if t.alias != "" {
 			name = t.alias
 		}
-		var td *TupleDesc = (*t.file).Descriptor()
+		tableStats[name] = stats
+
+		td := (*t.file).Descriptor()
 		td.setTableAlias(name)
-		//td = td.setTableAlias(name)
-		tableMap[name] = &PlanNode{*t.file, td}
+
+		card := 0
+		if stats != nil {
+			card = stats.EstimateCardinality(1.0)
+		}
+		tableMap[name] = &PlanNode{NewOperatorCard(*t.file, card), td}
+		sel[name] = 1.0
 	}
 
 	//now apply each filter to appropriate table
@@ -852,24 +945,76 @@ func makePhysicalPlan(c *Catalog, plan *LogicalPlan) (Operator, error) {
 		desc := *op.Descriptor()
 		desc.setTableAlias(tabName)
 
-		switch leftExpr.GetExprType().Ftype {
-		case IntType:
-			newOp, err := NewIntFilter(rightExpr, f.predOp, leftExpr, op)
-			if err != nil {
-				return nil, err
-			}
-			tableMap[leftExpr.GetExprType().TableQualifier] = &PlanNode{newOp, &desc}
-		case StringType:
-			newOp, err := NewStringFilter(rightExpr, f.predOp, leftExpr, op)
-			if err != nil {
-				return nil, err
-			}
-			tableMap[leftExpr.GetExprType().TableQualifier] = &PlanNode{newOp, &desc}
+		fieldType := leftExpr.GetExprType()
+		table := fieldType.TableQualifier
+		field := fieldType.Fname
+		table_stats := tableStats[table]
+
+		filterSel := 1.0
+		constExpr, ok := rightExpr.(*ConstExpr)
+		if ok && table_stats != nil {
+			filterSel, err = table_stats.EstimateSelectivity(field, f.predOp, constExpr.val)
+		}
+		if err != nil {
+			return nil, err
+		}
+		sel[table] *= filterSel
+
+		newOp, err := NewFilter(rightExpr, f.predOp, leftExpr, op)
+		if err != nil {
+			return nil, err
+		}
+
+		tableMap[table] = &PlanNode{NewOperatorCard(newOp, int(float64(op.Cardinality)*filterSel)), &desc}
+	}
+
+	selects := make(map[TableAndField]*LogicalSelectNode)
+	join_order := make([]*JoinNode, len(plan.joins))
+	for i, j := range plan.joins {
+		leftName, leftField, err := j.left.getTableField(c, plan.subqueries, plan.tables)
+		if err != nil {
+			return nil, err
+		}
+
+		rightName, rightField, err := j.right.getTableField(c, plan.subqueries, plan.tables)
+		if err != nil {
+			return nil, err
+		}
+
+		leftStats := tableStats[leftName]
+		if leftStats == nil {
+			return nil, GoDBError{ParseError, fmt.Sprintf("no stats for lhs table %s, join %v, tables %v", leftName, j.left, tableMap)}
+		}
+
+		rightStats := tableStats[rightName]
+		if rightStats == nil {
+			return nil, GoDBError{ParseError, fmt.Sprintf("no stats for rhs table %s, join %v, tables %v", rightName, j, tableMap)}
+		}
+
+		join_order[i] = &JoinNode{
+			leftTable:  TableInfo{leftName, leftStats, sel[leftName]},
+			leftField:  leftField,
+			rightTable: TableInfo{rightName, rightStats, sel[rightName]},
+			rightField: rightField,
+		}
+		selects[TableAndField{leftName, leftField}] = j.left
+		selects[TableAndField{rightName, rightField}] = j.right
+	}
+
+	if EnableJoinOptimization {
+		var err error
+		join_order, err = OrderJoins(join_order)
+		if err != nil {
+			return nil, err
 		}
 	}
+
 	//finally apply joins
-	for _, j := range plan.joins {
-		lTabName, lFieldName, err := j.left.getTableField(c, plan.subqueries, plan.tables)
+	for _, j := range join_order {
+		left := selects[TableAndField{j.leftTable.name, j.leftField}]
+		right := selects[TableAndField{j.rightTable.name, j.rightField}]
+
+		lTabName, lFieldName, err := left.getTableField(c, plan.subqueries, plan.tables)
 		if err != nil {
 			return nil, err
 		}
@@ -879,7 +1024,7 @@ func makePhysicalPlan(c *Catalog, plan *LogicalPlan) (Operator, error) {
 			return nil, err
 		}
 
-		rTabName, rFieldName, err := j.right.getTableField(c, plan.subqueries, plan.tables)
+		rTabName, rFieldName, err := right.getTableField(c, plan.subqueries, plan.tables)
 		if err != nil {
 			return nil, err
 		}
@@ -901,28 +1046,21 @@ func makePhysicalPlan(c *Catalog, plan *LogicalPlan) (Operator, error) {
 			leftField, _ := fieldNameToField(j.t1, j.f1, node1)
 			rightField, _ := fieldNameToField(j.t2, j.f2, node2)
 		*/
-		leftExpr, _, err := j.left.generateExpr(c, node1.desc, tableMap)
+		leftExpr, _, err := left.generateExpr(c, node1.desc, tableMap)
 		if err != nil {
 			return nil, err
 		}
-		rightExpr, _, err := j.right.generateExpr(c, node2.desc, tableMap)
+		rightExpr, _, err := right.generateExpr(c, node2.desc, tableMap)
 		if err != nil {
 			return nil, err
 		}
 
-		var (
-			newOp Operator
-		)
-		switch leftExpr.GetExprType().Ftype {
-		case IntType:
-			newOp, err = NewIntJoin(op1, leftExpr, op2, rightExpr, JoinBufferSize)
-		case StringType:
-			newOp, err = NewStringJoin(op1, leftExpr, op2, rightExpr, JoinBufferSize)
-		}
+		newOp, err := NewJoin(op1, leftExpr, op2, rightExpr, JoinBufferSize)
 		if err != nil {
 			return nil, err
 		}
-		newNode := &PlanNode{newOp, newOp.Descriptor()}
+
+		newNode := &PlanNode{NewOperatorCard(newOp, EstimateJoinCardinality(node1.op.Cardinality, node2.op.Cardinality)), newOp.Descriptor()}
 		for key, node := range tableMap {
 			if node.op == op1 {
 				tableMap[key] = newNode
@@ -933,13 +1071,11 @@ func makePhysicalPlan(c *Catalog, plan *LogicalPlan) (Operator, error) {
 		}
 		tableMap[lTabName] = newNode
 		tableMap[rTabName] = newNode
-		//&PlanNode{newOp, newOp.Descriptor()}
-
 	}
 
 	//check that all tables have the same op (all tables are joined)
 	first := true
-	var curOp Operator
+	var curOp *OperatorCard
 	for _, node := range tableMap {
 		if first {
 			curOp = node.op
@@ -984,7 +1120,6 @@ func makePhysicalPlan(c *Catalog, plan *LogicalPlan) (Operator, error) {
 				}
 			*/
 
-			var getter func(DBValue) any
 			if s.exprType == ExprAggr {
 				var as AggState
 
@@ -1001,45 +1136,39 @@ func makePhysicalPlan(c *Catalog, plan *LogicalPlan) (Operator, error) {
 					return nil, err
 				}
 
-				switch aggExpr.GetExprType().Ftype {
-				case IntType:
-					getter = intAggGetter
-				case StringType:
-					getter = stringAggGetter
-				}
-
 				switch *s.funcOp {
 				case "max":
-					if aggExpr.GetExprType().Ftype == StringType {
-						as = &MaxAggState[string]{}
-					} else {
-						as = &MaxAggState[int64]{}
-					}
+					as = &MaxAggState{}
 
 				case "min":
-					if aggExpr.GetExprType().Ftype == StringType {
-						as = &MinAggState[string]{}
-					} else {
-						as = &MinAggState[int64]{}
-					}
+					as = &MinAggState{}
 				case "avg":
-					as = &AvgAggState[int64]{}
+					as = &AvgAggState{}
 				case "sum":
-					as = &SumAggState[int64]{}
+					as = &SumAggState{}
 				case "count":
 					as = &CountAggState{}
 				default:
 					return nil, GoDBError{IllegalOperationError, fmt.Sprintf("unknown aggregate function %s", *s.funcOp)}
 				}
+
 				//make sure name has unique id
 				name := fmt.Sprintf("%s(%s.%s)%d", *s.funcOp, tabName, fieldName, aggCnt)
 				aggCnt++
 				if s.alias != "" {
 					name = s.alias
 				}
-				as.Init(name, aggExpr, getter)
+				err = as.Init(name, aggExpr)
+				if err != nil {
+					return nil, err
+				}
 				aggs = append(aggs, as)
-				s.cachedField = &as.GetTupleDesc().Fields[0] //track aggregates by reference rather than name
+
+				td := as.GetTupleDesc() //track aggregates by reference rather than name
+				if td == nil {
+					return nil, fmt.Errorf("Unexpected null tuple descriptor for aggregate %s", name)
+				}
+				s.cachedField = &td.Fields[0]
 			}
 		}
 
@@ -1052,11 +1181,12 @@ func makePhysicalPlan(c *Catalog, plan *LogicalPlan) (Operator, error) {
 		}
 
 		if len(gbys) == 0 {
-			topOp = NewAggregator(aggs, topOp)
+			topOp = NewOperatorCard(NewAggregator(aggs, topOp), 1)
 		} else {
-			topOp = NewGroupedAggregator(aggs, gbys, topOp)
+			topOp = NewOperatorCard(NewGroupedAggregator(aggs, gbys, topOp), 0)
 		}
 	}
+
 	exprList := make([]Expr, len(plan.selects))
 	for i, s := range plan.selects {
 		switch s.exprType {
@@ -1078,7 +1208,7 @@ func makePhysicalPlan(c *Catalog, plan *LogicalPlan) (Operator, error) {
 		if err != nil {
 			return nil, err
 		}
-		topOp = projOp
+		topOp = NewOperatorCard(projOp, topOp.Cardinality)
 	}
 
 	if len(plan.orderByFields) > 0 {
@@ -1094,12 +1224,11 @@ func makePhysicalPlan(c *Catalog, plan *LogicalPlan) (Operator, error) {
 			ascs = append(ascs, oby.ascending)
 
 		}
-		var err error
-		topOp, err = NewOrderBy(exprs, topOp, ascs)
+		orderOp, err := NewOrderBy(exprs, topOp, ascs)
 		if err != nil {
 			return nil, err
 		}
-
+		topOp = NewOperatorCard(orderOp, topOp.Cardinality)
 	}
 
 	if plan.limit != nil {
@@ -1107,7 +1236,12 @@ func makePhysicalPlan(c *Catalog, plan *LogicalPlan) (Operator, error) {
 		if err != nil {
 			return nil, err
 		}
-		topOp = NewLimitOp(expr, topOp)
+		numTupsExpr, err := expr.EvalExpr(&Tuple{})
+		if err != nil {
+			return nil, err
+		}
+		numTups := numTupsExpr.(IntField).Value
+		topOp = NewOperatorCard(NewLimitOp(expr, topOp), min(int(numTups), topOp.Cardinality))
 	}
 	return topOp, nil
 }
@@ -1176,7 +1310,7 @@ func parseDelete(c *Catalog, delStmt *sqlparser.Delete) (Operator, error) {
 	}
 
 	tableMap := make(map[string]*PlanNode)
-	tableMap[tables[0].tableName] = &PlanNode{*tables[0].file, (*tables[0].file).Descriptor()}
+	tableMap[tables[0].tableName] = &PlanNode{&OperatorCard{Op: *tables[0].file, Cardinality: 0}, (*tables[0].file).Descriptor()}
 
 	var filters []*LogicalFilterNode = make([]*LogicalFilterNode, 0)
 	if delStmt.Where != nil {
@@ -1211,22 +1345,14 @@ func parseDelete(c *Catalog, delStmt *sqlparser.Delete) (Operator, error) {
 		//op := node.op
 		//dbField, _ := fieldNameToField(f.table, f.field, &PlanNode{op, &desc})
 
-		switch leftExpr.GetExprType().Ftype {
-		case IntType:
-			//newInt, _ := strconv.Atoi(f.constVal)
-			newOp, err = NewIntFilter(rightExpr, f.predOp, leftExpr, newOp)
-			if err != nil {
-				return nil, err
-			}
-		case StringType:
-			newOp, err = NewStringFilter(rightExpr, f.predOp, leftExpr, newOp)
-			if err != nil {
-				return nil, err
-			}
+		//newInt, _ := strconv.Atoi(f.constVal)
+		newOp, err = NewFilter(rightExpr, f.predOp, leftExpr, newOp)
+		if err != nil {
+			return nil, err
 		}
 	}
-	return NewDeleteOp(*tables[0].file, newOp), nil
 
+	return NewDeleteOp(*tables[0].file, newOp), nil
 }
 
 type QueryType int
@@ -1269,7 +1395,10 @@ func processDDL(c *Catalog, ddl *sqlparser.DDL) (QueryType, error) {
 			fields[i] = FieldType{colName, "", colType}
 		}
 
-		c.addTable(tabName, TupleDesc{fields})
+		_, err := c.addTable(tabName, TupleDesc{fields})
+		if err != nil {
+			return UnknownQueryType, err
+		}
 		return CreateTableQueryType, nil
 
 	case "drop":

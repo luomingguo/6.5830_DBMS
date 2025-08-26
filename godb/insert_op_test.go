@@ -8,7 +8,7 @@ import (
 const InsertTestFile string = "InsertTestFile.dat"
 
 func TestInsert(t *testing.T) {
-	td, t1, _, hf, bp, tid := makeTestVars()
+	td, t1, _, hf, bp, tid := makeTestVars(t)
 	hf.insertTuple(&t1, tid)
 	hf.insertTuple(&t1, tid)
 	bp.CommitTransaction(tid)

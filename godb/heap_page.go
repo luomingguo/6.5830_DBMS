@@ -2,6 +2,7 @@ package godb
 
 import (
 	"bytes"
+	"fmt"
 )
 
 /* HeapPage implements the Page interface for pages of HeapFiles. We have
@@ -51,9 +52,9 @@ type heapPage struct {
 }
 
 // Construct a new heap page
-func newHeapPage(desc *TupleDesc, pageNo int, f *HeapFile) *heapPage {
+func newHeapPage(desc *TupleDesc, pageNo int, f *HeapFile) (*heapPage, error) {
 	// TODO: some code goes here
-	return &heapPage{} //replace me
+	return &heapPage{}, fmt.Errorf("newHeapPage is not implemented") //replace me
 }
 
 func (h *heapPage) getNumSlots() int {
@@ -65,15 +66,14 @@ func (h *heapPage) getNumSlots() int {
 // no free slots.  Set the tuples rid and return it.
 func (h *heapPage) insertTuple(t *Tuple) (recordID, error) {
 	// TODO: some code goes here
-	return 0, nil //replace me
+	return 0, fmt.Errorf("insertTuple not implemented") //replace me
 }
 
-// Delete the tuple in the specified slot number, or return an error if
-// the slot is invalid
+// Delete the tuple at the specified record ID, or return an error if the ID is
+// invalid.
 func (h *heapPage) deleteTuple(rid recordID) error {
 	// TODO: some code goes here
-	return nil //replace me
-
+	return fmt.Errorf("deleteTuple not implemented") //replace me
 }
 
 // Page method - return whether or not the page is dirty
@@ -83,13 +83,13 @@ func (h *heapPage) isDirty() bool {
 }
 
 // Page method - mark the page as dirty
-func (h *heapPage) setDirty(dirty bool) {
+func (h *heapPage) setDirty(tid TransactionID, dirty bool) {
 	// TODO: some code goes here
 }
 
 // Page method - return the corresponding HeapFile
 // for this page.
-func (p *heapPage) getFile() *DBFile {
+func (p *heapPage) getFile() DBFile {
 	// TODO: some code goes here
 	return nil //replace me
 }
@@ -101,14 +101,13 @@ func (p *heapPage) getFile() *DBFile {
 // page, written using the Tuple.writeTo method.
 func (h *heapPage) toBuffer() (*bytes.Buffer, error) {
 	// TODO: some code goes here
-	return nil,nil //replace me
-
+	return nil, fmt.Errorf("heap_page.toBuffer not implemented") //replace me
 }
 
 // Read the contents of the HeapPage from the supplied buffer.
 func (h *heapPage) initFromBuffer(buf *bytes.Buffer) error {
 	// TODO: some code goes here
-	return nil //replace me
+	return fmt.Errorf("initFromBuffer not implemented") //replace me
 }
 
 // Return a function that iterates through the tuples of the heap page.  Be sure
@@ -116,5 +115,7 @@ func (h *heapPage) initFromBuffer(buf *bytes.Buffer) error {
 // return it. Return nil, nil when the last tuple is reached.
 func (p *heapPage) tupleIter() func() (*Tuple, error) {
 	// TODO: some code goes here
-	return nil //replace me
+	return func() (*Tuple, error) {
+	return nil, fmt.Errorf("heap_file.Iterator not implemented") // replace me
+	}
 }

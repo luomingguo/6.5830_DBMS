@@ -15,7 +15,7 @@ const WAIT_INTERVAL = 200 * time.Millisecond
 * t1 acquires p0.read; t2 acquires p1.read; t1 attempts p1.write; t2
 * attempts p0.write. Rinse and repeat.
  */
-func TestReadWriteDeadlock(t *testing.T) {
+func TestDeadlockReadWrite(t *testing.T) {
 	bp, hf, tid1, tid2 := lockingTestSetUp(t)
 
 	lg1Read := startGrabber(bp, tid1, hf, 0, ReadPerm)
@@ -67,7 +67,7 @@ func TestReadWriteDeadlock(t *testing.T) {
  * t1 acquires p0.write; t2 acquires p1.write; t1 attempts p1.write; t2
  * attempts p0.write.
  */
-func TestWriteWriteDeadlock(t *testing.T) {
+func TestDeadlockWriteWrite(t *testing.T) {
 	bp, hf, tid1, tid2 := lockingTestSetUp(t)
 
 	lg1WriteA := startGrabber(bp, tid1, hf, 0, WritePerm)
@@ -119,7 +119,7 @@ func TestWriteWriteDeadlock(t *testing.T) {
  * t1 acquires p0.read; t2 acquires p0.read; t1 attempts to upgrade to
  * p0.write; t2 attempts to upgrade to p0.write
  */
-func TestUpgradeWriteDeadlock(t *testing.T) {
+func TestDeadlockUpgradeWrite(t *testing.T) {
 	bp, hf, tid1, tid2 := lockingTestSetUp(t)
 
 	lg1Read := startGrabber(bp, tid1, hf, 0, ReadPerm)

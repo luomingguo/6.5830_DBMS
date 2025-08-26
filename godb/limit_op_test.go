@@ -5,7 +5,8 @@ import (
 )
 
 func testLimitCount(t *testing.T, n int) {
-	_, t1, t2, hf, bp, _ := makeTestVars()
+	t.Helper()
+	_, t1, t2, hf, bp, _ := makeTestVars(t)
 
 	for i := 0; i < n; i++ {
 		tid := NewTID()
@@ -25,22 +26,11 @@ func testLimitCount(t *testing.T, n int) {
 		// because CommitTransaction may not be implemented
 		// yet if this is called in lab 2
 		if i%10 == 0 {
-			for j := hf.NumPages() - 1; j > -1; j-- {
-				pg, err := bp.GetPage(hf, j, tid, ReadPerm)
-				if pg == nil || err != nil {
-					t.Fatal("page nil or error", err)
-				}
-				if (*pg).isDirty() {
-					(*hf).flushPage(pg)
-					(*pg).setDirty(false)
-				}
-			}
+			bp.FlushAllPages()
 		}
 
 		//commit frequently to prevent buffer pool from filling
-		//todo fix
 		bp.CommitTransaction(tid)
-
 	}
 
 	// check results

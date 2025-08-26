@@ -6,90 +6,45 @@ import (
 	"testing"
 )
 
-func MakeTestDatabaseEasy(bp *BufferPool) error {
-	var td = TupleDesc{Fields: []FieldType{
-		{Fname: "name", Ftype: StringType},
-		{Fname: "age", Ftype: IntType},
-	}}
-	os.Remove("t2.dat")
-	os.Remove("t.dat")
-
-	hf, err := NewHeapFile("t.dat", &td, bp)
-	if err != nil {
-		return err
-	}
-	hf2, err := NewHeapFile("t2.dat", &td, bp)
-	if err != nil {
-		return err
-	}
-
-	f, err := os.Open("testdb.txt")
-	if err != nil {
-		return err
-	}
-	err = hf.LoadFromCSV(f, true, ",", false)
-	if err != nil {
-		return err
-	}
-
-	f, err = os.Open("testdb.txt")
-	if err != nil {
-		return err
-	}
-	err = hf2.LoadFromCSV(f, true, ",", false)
-	if err != nil {
-		return err
-	}
-	return nil
+type Query struct {
+	SQL     string
+	Ordered bool
 }
 
 func TestParseEasy(t *testing.T) {
-	var queries []string = []string{
-		"select name,age,getsubstr(epochtodatetimestring(epoch() - age*365*24*60*60),24,4) birthyear from t",
-		"select sum(age + 10) , sum(age) from t",
-		"select min(age) + max(age) from t",
-		"select * from t limit 1+2",
-		"select t.name, t.age from t join t2 on t.name = t2.name, t2 as t3 where t.age < 50 and t3.age = t.age order by t.age asc, t.name asc",
-		"select sq(sq(5)) from t",
-		"select 1, name from t",
-		"select age, name from t",
-		"select t.name, sum(age) totage from t group by t.name",
-		"select t.name, t.age from t join t2 on t.name = t2.name where t.age < 50",
-		"select name from (select x.name from (select t.name from t) x)y order by name asc",
-		"select age, count(*) from t group by age",
+	queries := []Query{
+		{SQL: "select sum(age) as s from t group by t.name having s > 30", Ordered: false},
+		{SQL: "select sum(age + 10) , sum(age) from t", Ordered: false},
+		{SQL: "select min(age) + max(age) from t", Ordered: false},
+		{SQL: "select * from t order by t.age, t.name limit 1+2", Ordered: true},
+		{SQL: "select t.name, t.age from t join t2 on t.name = t2.name, t2 as t3 where t.age < 50 and t3.age = t.age order by t.age asc, t.name asc", Ordered: true},
+		{SQL: "select sq(sq(5)) from t", Ordered: false},
+		{SQL: "select 1, name from t", Ordered: false},
+		{SQL: "select age, name from t", Ordered: false},
+		{SQL: "select t.name, sum(age) totage from t group by t.name", Ordered: false},
+		{SQL: "select t.name, t.age from t join t2 on t.name = t2.name where t.age < 50", Ordered: false},
+		{SQL: "select name from (select x.name from (select t.name from t) x)y order by name asc", Ordered: true},
+		{SQL: "select age, count(*) from t group by age", Ordered: false},
 	}
 	save := false        //set save to true to save the output of the current test run as the correct answer
 	printOutput := false //print the result set during testing
 
-	bp := NewBufferPool(10)
-	err := MakeTestDatabaseEasy(bp)
+	bp, c, err := MakeParserTestDatabase(10)
 	if err != nil {
-		t.Errorf("failed to create test database, %s", err.Error())
-		return
+		t.Fatalf("failed to create test database, %s", err.Error())
 	}
 
-	c, err := NewCatalogFromFile("catalog.txt", bp, "./")
-	if err != nil {
-		t.Errorf("failed load catalog, %s", err.Error())
-		return
-	}
 	qNo := 0
-	for _, sql := range queries {
-		tid := NewTID()
-		bp.BeginTransaction(tid)
+	for _, query := range queries {
+		tid := BeginTransactionForTest(t, bp)
 		qNo++
-		if qNo == 4 {
-			continue
-		}
 
-		qType, plan, err := Parse(c, sql)
+		qType, plan, err := Parse(c, query.SQL)
 		if err != nil {
-			t.Errorf("failed to parse, q=%s, %s", sql, err.Error())
-			return
+			t.Fatalf("failed to parse, q=%s, %s", query.SQL, err.Error())
 		}
 		if plan == nil {
-			t.Errorf("plan was nil")
-			return
+			t.Fatalf("plan was nil")
 		}
 		if qType != IteratorType {
 			continue
@@ -104,8 +59,7 @@ func TestParseEasy(t *testing.T) {
 			os.Remove(fname)
 			outfile_csv, err = os.OpenFile(fname, os.O_RDWR|os.O_CREATE, 0644)
 			if err != nil {
-				t.Errorf("failed to open CSV file (%s)", err.Error())
-				return
+				t.Fatalf("failed to open CSV file (%s)", err.Error())
 			}
 			//outfile, _ = NewHeapFile(fname, plan.Descriptor(), bp)
 		} else {
@@ -113,36 +67,30 @@ func TestParseEasy(t *testing.T) {
 			os.Remove(fname_bin)
 			desc := plan.Descriptor()
 			if desc == nil {
-				t.Errorf("descriptor was nil")
-				return
+				t.Fatalf("descriptor was nil")
 			}
 
 			outfile, _ = NewHeapFile(fname_bin, desc, bp)
 			if outfile == nil {
-				t.Errorf("heapfile was nil")
-				return
+				t.Fatalf("heapfile was nil")
 			}
 			f, err := os.Open(fname)
 			if err != nil {
-				t.Errorf("csv file with results was nil (%s)", err.Error())
-				return
+				t.Fatalf("csv file with results was nil (%s)", err.Error())
 			}
 			err = outfile.LoadFromCSV(f, true, ",", false)
 			if err != nil {
-				t.Errorf(err.Error())
-				return
+				t.Fatalf(err.Error())
 			}
 
 			resultIter, err := outfile.Iterator(tid)
 			if err != nil {
-				t.Errorf("%s", err.Error())
-				return
+				t.Fatalf(err.Error())
 			}
 			for {
 				tup, err := resultIter()
 				if err != nil {
-					t.Errorf("%s", err.Error())
-					break
+					t.Fatalf(err.Error())
 				}
 
 				if tup != nil {
@@ -154,11 +102,11 @@ func TestParseEasy(t *testing.T) {
 		}
 
 		if printOutput || save {
-			fmt.Printf("Doing %s\n", sql)
+			fmt.Printf("Doing %s\n", query.SQL)
 			iter, err := plan.Iterator(tid)
 			if err != nil {
-				t.Errorf("%s", err.Error())
-				return
+				t.Fatalf("%s", err.Error())
+
 			}
 			nresults := 0
 			if save {
@@ -185,17 +133,21 @@ func TestParseEasy(t *testing.T) {
 			fmt.Printf("(%d results)\n\n", nresults)
 		}
 		if save {
-			//outfile.bufPool.CommitTransaction(tid)
+			bp.FlushAllPages()
+			outfile.bufPool.CommitTransaction(tid)
 			outfile_csv.Close()
 		} else {
 			iter, err := plan.Iterator(tid)
 			if err != nil {
-				t.Errorf("%s", err.Error())
-				return
+				t.Fatalf("%s", err.Error())
 			}
-			match := CheckIfOutputMatches(iter, resultSet)
-			if !match {
-				t.Errorf("query '%s' did not match expected result set", sql)
+			if query.Ordered {
+				err = CheckIfOutputMatches(iter, resultSet)
+			} else {
+				err = CheckIfOutputMatchesUnordered(iter, resultSet)
+			}
+			if err != nil {
+				t.Errorf("query '%s' did not match expected result set: %v", query.SQL, err)
 				verbose := true
 				if verbose {
 					fmt.Print("Expected: \n")
@@ -206,7 +158,4 @@ func TestParseEasy(t *testing.T) {
 			}
 		}
 	}
-
-	//print(op)
-
 }

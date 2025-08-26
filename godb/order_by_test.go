@@ -5,10 +5,39 @@ import (
 	"testing"
 )
 
+func makeOrderByOrderingVars() (DBFile, Tuple, TupleDesc, *BufferPool, error) {
+	var td = TupleDesc{Fields: []FieldType{
+		{Fname: "a", Ftype: StringType},
+		{Fname: "b", Ftype: IntType},
+		{Fname: "c", Ftype: IntType},
+	}}
+
+	var t = Tuple{
+		Desc: td,
+		Fields: []DBValue{
+			StringField{"sam"},
+			IntField{25},
+			IntField{5},
+		}}
+
+	bp, c, err := MakeTestDatabase(3, "catalog.txt")
+	if err != nil {
+		return nil, t, td, nil, err
+	}
+
+	os.Remove("test.dat")
+	hf, err := c.addTable("test", td)
+	if err != nil {
+		return hf, t, td, nil, err
+	}
+
+	return hf, t, td, bp, nil
+}
+
 // test the order by operator, by asking it to sort the test database
 // in ascending and descending order and verifying the result
 func TestOrderBy(t *testing.T) {
-	_, t1, t2, hf, _, tid := makeTestVars()
+	_, t1, t2, hf, _, tid := makeTestVars(t)
 	hf.insertTuple(&t1, tid)
 	hf.insertTuple(&t2, tid)
 	bs := make([]bool, 2)
@@ -42,7 +71,6 @@ func TestOrderBy(t *testing.T) {
 			}
 		}
 		last = fval
-
 	}
 
 	for i := range bs {
@@ -68,13 +96,11 @@ func TestOrderBy(t *testing.T) {
 			}
 		}
 		last = fval
-
 	}
-
 }
 
 // harder order by test that inserts 4 tuples, and alternates ascending vs descending
-func TestMultiFieldOrderBy(t *testing.T) {
+func TestOrderByMultiField(t *testing.T) {
 	var td = TupleDesc{Fields: []FieldType{
 		{Fname: "name", Ftype: StringType},
 		{Fname: "age", Ftype: IntType},
@@ -104,9 +130,13 @@ func TestMultiFieldOrderBy(t *testing.T) {
 		Rid:    nil,
 	}
 
-	bp := NewBufferPool(2)
-	os.Remove(TestingFile)
-	hf, err := NewHeapFile(TestingFile, &td, bp)
+	bp, c, err := MakeTestDatabase(2, "catalog.txt")
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	os.Remove("test.dat")
+	hf, err := c.addTable("test", td)
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
@@ -158,5 +188,47 @@ func TestMultiFieldOrderBy(t *testing.T) {
 	}
 
 	bp.CommitTransaction(tid)
+}
 
+func TestOrderByFieldsOrder(t *testing.T) {
+	hf, tup, td, bp, err := makeOrderByOrderingVars()
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	tid := NewTID()
+	bp.BeginTransaction(tid)
+	hf.insertTuple(&tup, tid)
+
+	bs := make([]bool, 2)
+	for i := range bs {
+		bs[i] = false
+	}
+
+	exprs := []Expr{&FieldExpr{td.Fields[0]}, &FieldExpr{td.Fields[2]}}
+
+	oby, err := NewOrderBy(exprs, hf, bs)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	iter, _ := oby.Iterator(tid)
+	if iter == nil {
+		t.Fatalf("iter was nil")
+	}
+
+	var expectedDesc = TupleDesc{Fields: []FieldType{
+		{Fname: "a", Ftype: StringType},
+		{Fname: "b", Ftype: IntType},
+		{Fname: "c", Ftype: IntType},
+	}}
+
+	tupOut, err := iter()
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	if !expectedDesc.equals(&tupOut.Desc) {
+		t.Fatalf("Unexpected descriptor of ordered tuple")
+	}
 }

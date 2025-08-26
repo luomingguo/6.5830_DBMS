@@ -4,14 +4,23 @@ import (
 	"testing"
 )
 
-func TestSimpleSumAgg(t *testing.T) {
-	_, t1, t2, hf, _, tid := makeTestVars()
+func TestAggSimpleSum(t *testing.T) {
+	_, t1, t2, hf, _, tid := makeTestVars(t)
 
-	hf.insertTuple(&t1, tid)
-	hf.insertTuple(&t2, tid)
-	sa := SumAggState[int64]{}
+	err := hf.insertTuple(&t1, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	err = hf.insertTuple(&t2, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	sa := SumAggState{}
 	expr := FieldExpr{t1.Desc.Fields[1]}
-	sa.Init("sum", &expr, intAggGetter)
+	err = sa.Init("sum", &expr)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 	agg := NewAggregator([]AggState{&sa}, hf)
 	iter, err := agg.Iterator(tid)
 	if err != nil {
@@ -33,13 +42,22 @@ func TestSimpleSumAgg(t *testing.T) {
 	}
 }
 
-func TestMinStringAgg(t *testing.T) {
-	_, t1, t2, hf, _, tid := makeTestVars()
-	hf.insertTuple(&t1, tid)
-	hf.insertTuple(&t2, tid)
-	sa := MinAggState[string]{}
+func TestAggMinStringAgg(t *testing.T) {
+	_, t1, t2, hf, _, tid := makeTestVars(t)
+	err := hf.insertTuple(&t1, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	err = hf.insertTuple(&t2, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	sa := MinAggState{}
 	expr := FieldExpr{t1.Desc.Fields[0]}
-	sa.Init("min", &expr, stringAggGetter)
+	err = sa.Init("min", &expr)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 	agg := NewAggregator([]AggState{&sa}, hf)
 	iter, err := agg.Iterator(tid)
 	if err != nil {
@@ -61,13 +79,22 @@ func TestMinStringAgg(t *testing.T) {
 	}
 }
 
-func TestSimpleCountAgg(t *testing.T) {
-	_, t1, t2, hf, _, tid := makeTestVars()
-	hf.insertTuple(&t1, tid)
-	hf.insertTuple(&t2, tid)
+func TestAggSimpleCount(t *testing.T) {
+	_, t1, t2, hf, _, tid := makeTestVars(t)
+	err := hf.insertTuple(&t1, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	err = hf.insertTuple(&t2, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 	sa := CountAggState{}
 	expr := FieldExpr{t1.Desc.Fields[0]}
-	sa.Init("count", &expr, nil)
+	err = sa.Init("count", &expr)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 	agg := NewAggregator([]AggState{&sa}, hf)
 	iter, err := agg.Iterator(tid)
 	if err != nil {
@@ -89,17 +116,28 @@ func TestSimpleCountAgg(t *testing.T) {
 	}
 }
 
-func TestMultiAgg(t *testing.T) {
-	_, t1, t2, hf, _, tid := makeTestVars()
-	hf.insertTuple(&t1, tid)
-	hf.insertTuple(&t2, tid)
+func TestAggMulti(t *testing.T) {
+	_, t1, t2, hf, _, tid := makeTestVars(t)
+	err := hf.insertTuple(&t1, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	err = hf.insertTuple(&t2, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 	ca := CountAggState{}
 	expr := FieldExpr{t1.Desc.Fields[0]}
-	ca.Init("count", &expr, nil)
-	sa := SumAggState[int64]{}
+	err = ca.Init("count", &expr)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	sa := SumAggState{}
 	expr = FieldExpr{t1.Desc.Fields[1]}
-	sa.Init("sum", &expr, intAggGetter)
-
+	err = sa.Init("sum", &expr)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 	agg := NewAggregator([]AggState{&ca, &sa}, hf)
 	iter, err := agg.Iterator(tid)
 	if err != nil {
@@ -123,20 +161,33 @@ func TestMultiAgg(t *testing.T) {
 	if sum != 1024 {
 		t.Errorf("unexpected sum")
 	}
-
 }
 
-func TestGbyCountAgg(t *testing.T) {
-	_, t1, t2, hf, _, tid := makeTestVars()
-	hf.insertTuple(&t1, tid)
-	hf.insertTuple(&t2, tid)
-	hf.insertTuple(&t2, tid)
-	hf.insertTuple(&t2, tid)
-
+func TestAggGbyCount(t *testing.T) {
+	_, t1, t2, hf, _, tid := makeTestVars(t)
+	err := hf.insertTuple(&t1, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	err = hf.insertTuple(&t2, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	err = hf.insertTuple(&t2, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	err = hf.insertTuple(&t2, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 	gbyFields := []Expr{&FieldExpr{hf.Descriptor().Fields[0]}}
 	sa := CountAggState{}
 	expr := FieldExpr{t1.Desc.Fields[0]}
-	sa.Init("count", &expr, nil)
+	err = sa.Init("count", &expr)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 
 	agg := NewGroupedAggregator([]AggState{&sa}, gbyFields, hf)
 	iter, _ := agg.Iterator(tid)
@@ -160,24 +211,39 @@ func TestGbyCountAgg(t *testing.T) {
 		nil,
 	}
 	ts := []*Tuple{&outt1, &outt2}
-	match := CheckIfOutputMatches(iter, ts)
-	if !match {
-		t.Fail()
+	err = CheckIfOutputMatches(iter, ts)
+	if err != nil {
+		t.Fatalf(err.Error())
 	}
 }
 
-func TestGbySumAgg(t *testing.T) {
-	_, t1, t2, hf, _, tid := makeTestVars()
-	hf.insertTuple(&t1, tid)
-	hf.insertTuple(&t2, tid)
-	hf.insertTuple(&t1, tid)
-	hf.insertTuple(&t2, tid)
+func TestAggGbySum(t *testing.T) {
+	_, t1, t2, hf, _, tid := makeTestVars(t)
+	err := hf.insertTuple(&t1, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	err = hf.insertTuple(&t2, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	err = hf.insertTuple(&t1, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	err = hf.insertTuple(&t2, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 	//gbyFields := hf.td.Fields[0:1]
 	gbyFields := []Expr{&FieldExpr{hf.Descriptor().Fields[0]}}
 
-	sa := SumAggState[int64]{}
+	sa := SumAggState{}
 	expr := FieldExpr{t1.Desc.Fields[1]}
-	sa.Init("sum", &expr, intAggGetter)
+	err = sa.Init("sum", &expr)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 
 	agg := NewGroupedAggregator([]AggState{&sa}, gbyFields, hf)
 	iter, _ := agg.Iterator(tid)
@@ -200,19 +266,25 @@ func TestGbySumAgg(t *testing.T) {
 		}, nil,
 	}
 	ts := []*Tuple{&outt1, &outt2}
-	match := CheckIfOutputMatches(iter, ts)
-	if !match {
-		t.Fail()
+	err = CheckIfOutputMatches(iter, ts)
+	if err != nil {
+		t.Fatalf(err.Error())
 	}
 }
 
-func TestFilterCountAgg(t *testing.T) {
-	_, t1, t2, hf, _, tid := makeTestVars()
-	hf.insertTuple(&t1, tid)
-	hf.insertTuple(&t2, tid)
+func TestAggFilterCount(t *testing.T) {
+	_, t1, t2, hf, _, tid := makeTestVars(t)
+	err := hf.insertTuple(&t1, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	err = hf.insertTuple(&t2, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 
 	var f FieldType = FieldType{"age", "", IntType}
-	filt, err := NewIntFilter(&ConstExpr{IntField{25}, IntType}, OpGt, &FieldExpr{f}, hf)
+	filt, err := NewFilter(&ConstExpr{IntField{25}, IntType}, OpGt, &FieldExpr{f}, hf)
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
@@ -222,7 +294,10 @@ func TestFilterCountAgg(t *testing.T) {
 
 	sa := CountAggState{}
 	expr := FieldExpr{t1.Desc.Fields[0]}
-	sa.Init("count", &expr, nil)
+	err = sa.Init("count", &expr)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 	agg := NewAggregator([]AggState{&sa}, filt)
 	iter, err := agg.Iterator(tid)
 	if err != nil {
@@ -244,13 +319,22 @@ func TestFilterCountAgg(t *testing.T) {
 	}
 }
 
-func TestRepeatedIteration(t *testing.T) {
-	_, t1, t2, hf, _, tid := makeTestVars()
-	hf.insertTuple(&t1, tid)
-	hf.insertTuple(&t2, tid)
+func TestAggRepeatedIteration(t *testing.T) {
+	_, t1, t2, hf, _, tid := makeTestVars(t)
+	err := hf.insertTuple(&t1, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	err = hf.insertTuple(&t2, tid)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 	sa := CountAggState{}
 	expr := FieldExpr{t1.Desc.Fields[0]}
-	sa.Init("count", &expr, nil)
+	err = sa.Init("count", &expr)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 	agg := NewAggregator([]AggState{&sa}, hf)
 	iter, err := agg.Iterator(tid)
 	if err != nil {
@@ -288,5 +372,4 @@ func TestRepeatedIteration(t *testing.T) {
 	if cnt != cnt2 {
 		t.Errorf("count changed on repeated iteration")
 	}
-
 }

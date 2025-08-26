@@ -36,7 +36,7 @@ func (f *FieldExpr) GetExprType() FieldType {
 }
 
 type ConstExpr struct {
-	val       any //should be an IntField or a StringField
+	val       DBValue
 	constType DBType
 }
 

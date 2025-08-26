@@ -1,7 +1,7 @@
 package godb
 
-//methods to expose an array of constant expressions as tuples
-// to iterate through (e.g., for insert statements or select from a constant list)
+// Methods to expose an array of constant expressions as tuples to iterate
+// through (e.g., for insert statements or select from a constant list).
 
 type ValueOp struct {
 	td    *TupleDesc

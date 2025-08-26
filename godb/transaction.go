@@ -1,13 +1,18 @@
 package godb
 
-type TransactionID *int
+import "sync"
+
+type TransactionID int
 
 var nextTid = 0
+var newTidMutex sync.Mutex
 
 func NewTID() TransactionID {
+	newTidMutex.Lock()
+	defer newTidMutex.Unlock()
 	id := nextTid
 	nextTid++
-	return &id
+	return TransactionID(id)
 }
 
 //var tid TransactionID = NewTID()

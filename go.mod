@@ -1,6 +1,6 @@
 module main
 
-go 1.19
+go 1.21
 
 replace github.com/srmadden/godb => ./godb
 
@@ -10,10 +10,7 @@ require (
 )
 
 require (
-	github.com/gorilla/mux v1.8.0 // indirect
-	github.com/mitchellh/hashstructure/v2 v2.0.2 // indirect
+	github.com/tylertreat/BoomFilters v0.0.0-20210315201527-1a82519a3e43 // indirect
 	github.com/xwb1989/sqlparser v0.0.0-20180606152119-120387863bf2 // indirect
-	golang.org/x/exp v0.0.0-20230522175609-2e198f4a06a1 // indirect
-	golang.org/x/sys v0.1.0 // indirect
-	
+	golang.org/x/sys v0.20.0 // indirect
 )

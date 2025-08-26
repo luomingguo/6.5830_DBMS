@@ -1,20 +1,28 @@
 package godb
 
 import (
+	"os"
 	"testing"
 )
 
-func TestSimpleQuery(t *testing.T) {
-
-	bp := NewBufferPool(10000)
-	MakeTestDatabaseEasy(bp)
-
-	catName := "catalog.txt"
-
-	c, err := NewCatalogFromFile(catName, bp, "./")
+func writeFile(t *testing.T, filename string, contents string) {
+	f, err := os.Create(filename)
 	if err != nil {
-		t.Fatalf("failed load catalog, %s", err.Error())
+		t.Fatal(err)
 	}
+	defer f.Close()
+	_, err = f.WriteString(contents)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSimpleQuery(t *testing.T) {
+	bp, c, err := MakeParserTestDatabase(10000)
+	if err != nil {
+		t.Fatalf("failed to create test database, %s", err.Error())
+	}
+
 	hf1, err := c.GetTable("t")
 	if err != nil {
 		t.Fatalf("no table t, %s", err.Error())
@@ -23,14 +31,15 @@ func TestSimpleQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("no table t2, %s", err.Error())
 	}
+
 	f_name := FieldExpr{FieldType{"name", "", StringType}}
-	joinOp, err := NewStringJoin(hf1, &f_name, hf2, &f_name, 1000)
+	joinOp, err := NewJoin(hf1, &f_name, hf2, &f_name, 1000)
 	if err != nil {
 		t.Fatalf("failed to construct join, %s", err.Error())
 	}
 	f_age := FieldExpr{FieldType{"age", "t", IntType}}
 	e_const := ConstExpr{IntField{30}, IntType}
-	filterOp, err := NewIntFilter(&e_const, OpGt, &f_age, joinOp)
+	filterOp, err := NewFilter(&e_const, OpGt, &f_age, joinOp)
 	if err != nil {
 		t.Fatalf("failed to construct filter, %s", err.Error())
 	}
@@ -41,8 +50,11 @@ func TestSimpleQuery(t *testing.T) {
 		t.Fatalf("filter op descriptor was nil")
 	}
 	sa := CountAggState{}
+	if len(filterOp.Descriptor().Fields) == 0 {
+		t.Fatalf("filter op descriptor has no fields")
+	}
 	expr := FieldExpr{filterOp.Descriptor().Fields[0]}
-	sa.Init("count", &expr, nil)
+	sa.Init("count", &expr)
 	agg := NewAggregator([]AggState{&sa}, filterOp)
 	tid := NewTID()
 	bp.BeginTransaction(tid)

@@ -1,12 +1,13 @@
 package godb
 
-// TODO: some code goes here
+import "fmt"
+
 type InsertOp struct {
 	// TODO: some code goes here
 }
 
-// Construtor.  The insert operator insert the records in the child
-// Operator into the specified DBFile.
+// Construct an insert operator that inserts the records in the child Operator
+// into the specified DBFile.
 func NewInsertOp(insertFile DBFile, child Operator) *InsertOp {
 	// TODO: some code goes here
 	return nil
@@ -25,6 +26,5 @@ func (i *InsertOp) Descriptor() *TupleDesc {
 // method.
 func (iop *InsertOp) Iterator(tid TransactionID) (func() (*Tuple, error), error) {
 	// TODO: some code goes here
-	return nil, nil
-
+	return nil, fmt.Errorf("InsertOp.Iterator not implemented")
 }
